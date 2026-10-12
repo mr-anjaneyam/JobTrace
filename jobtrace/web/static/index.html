@@ -63,8 +63,14 @@
       <div class="profile">
         <div class="avatar" id="avatar">?</div>
         <div>
-          <div class="kicker">Candidate Profile</div>
-          <div class="pname" id="p-name">—</div>
+          <div class="kicker-row">
+            <span class="kicker">Candidate Profile</span>
+            <span id="p-seniority-tag" class="seniority-pill" title="Auto-detected seniority band">—</span>
+          </div>
+          <div class="pname-row">
+            <div class="pname" id="p-name">—</div>
+            <button type="button" id="btn-edit-profile" class="btn-icon-edit" title="Review and edit analyzed profile">✏️ Edit</button>
+          </div>
           <div class="pmeta" id="p-headline"></div>
           <div class="pmeta" id="p-location"></div>
         </div>
@@ -92,6 +98,9 @@
 
     <div class="kicker sec">Experience Highlights</div>
     <ul class="exp" id="exp"><li class="muted">Loading profile…</li></ul>
+
+    <div class="kicker sec">Core Skills</div>
+    <div class="skills-chips" id="profile-skills"><span class="muted">Loading skills…</span></div>
 
     <div class="kicker sec">Sub-Score Fit Breakdown</div>
     <ul class="checks" id="checks"></ul>
@@ -269,6 +278,109 @@
       <div class="modal-footer-btns">
         <button type="button" id="btn-settings-cancel" class="btn-cancel">Cancel</button>
         <button type="button" id="btn-settings-save" class="btn-save">Save Settings</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Resume Analysis & Candidate Profile Confirmation Modal -->
+<div id="profile-modal" class="modal-backdrop" style="display: none;">
+  <div class="modal-dialog modal-dialog-lg">
+    <div class="modal-header">
+      <div class="modal-title-group">
+        <div class="modal-title-line">
+          <span class="modal-icon">📄</span>
+          <h2>Resume Analysis & Profile Confirmation</h2>
+        </div>
+        <span class="modal-subtitle">Review the extracted details from your resume below. Edit any field, adjust your seniority band, and confirm.</span>
+      </div>
+      <button class="modal-close" id="profile-modal-close" title="Close">&times;</button>
+    </div>
+
+    <div class="modal-body">
+      <!-- Seniority Detection Card -->
+      <div class="analysis-highlight-card">
+        <div class="highlight-left">
+          <div class="highlight-kicker">Auto-Detected Career Band</div>
+          <div class="highlight-band-title">
+            <span id="analysis-band-tag" class="band-tag band-mid">MID-LEVEL</span>
+            <span id="analysis-years-label" class="years-label">3.0 Years Exp</span>
+          </div>
+          <p id="analysis-reason-text" class="highlight-reason">Calculated 3.0 years of experience across 2 roles.</p>
+        </div>
+        <div class="highlight-right">
+          <label for="conf-seniority">Career Seniority Band</label>
+          <select id="conf-seniority" class="input-select">
+            <option value="intern">Intern / Student</option>
+            <option value="junior">Junior / Entry-Level (0-2 yrs)</option>
+            <option value="mid">Mid-Level (2-5 yrs)</option>
+            <option value="senior">Senior (5-8 yrs)</option>
+            <option value="lead">Lead / Staff / Principal (8+ yrs)</option>
+            <option value="any">Any (Disable seniority capping)</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Identity & Basics -->
+      <div class="form-row-2">
+        <div class="form-group">
+          <label for="conf-name">Candidate Name</label>
+          <input type="text" id="conf-name" class="input-text" placeholder="Your Name">
+        </div>
+        <div class="form-group">
+          <label for="conf-headline">Headline / Target Title</label>
+          <input type="text" id="conf-headline" class="input-text" placeholder="e.g. Full-Stack Software Engineer">
+        </div>
+      </div>
+
+      <div class="form-row-2">
+        <div class="form-group">
+          <label for="conf-location">Primary Location</label>
+          <input type="text" id="conf-location" class="input-text" placeholder="e.g. San Francisco, CA">
+        </div>
+        <div class="form-group">
+          <label for="conf-target-locations">Target Locations (Comma-separated)</label>
+          <input type="text" id="conf-target-locations" class="input-text" placeholder="Remote, San Francisco, New York">
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label for="conf-summary">Executive Profile Summary</label>
+        <textarea id="conf-summary" class="input-textarea" rows="3" placeholder="Summary of strengths, background, and target roles..."></textarea>
+      </div>
+
+      <!-- Technical Skills -->
+      <div class="form-group">
+        <div class="label-with-badge">
+          <label for="conf-skills">Technical Skills & Tooling</label>
+          <span class="badge-tag">Comma-separated</span>
+        </div>
+        <textarea id="conf-skills" class="input-textarea font-mono" rows="2" placeholder="Python, FastAPI, React, TypeScript, Docker, AWS, PostgreSQL..."></textarea>
+      </div>
+
+      <!-- Work Experience Roles -->
+      <div class="form-group">
+        <div class="label-with-badge">
+          <label>Work Experience Positions</label>
+          <button type="button" id="btn-add-experience" class="btn-subtle-add">+ Add Position</button>
+        </div>
+        <div id="conf-experience-list" class="experience-editor-list">
+          <!-- Populated dynamically with editable role cards -->
+        </div>
+      </div>
+
+      <!-- Education -->
+      <div class="form-group">
+        <label for="conf-education">Education & Degrees</label>
+        <input type="text" id="conf-education" class="input-text" placeholder="e.g. B.S. in Computer Science — University of California, Berkeley (2021)">
+      </div>
+    </div>
+
+    <div class="modal-footer">
+      <span id="profile-modal-status" class="status-msg"></span>
+      <div class="modal-footer-btns">
+        <button type="button" id="btn-profile-cancel" class="btn-cancel">Cancel</button>
+        <button type="button" id="btn-profile-confirm" class="btn-save">✅ Confirm & Save Profile</button>
       </div>
     </div>
   </div>

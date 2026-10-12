@@ -42,7 +42,7 @@ def load_dotenv(env_path: Path | None = None) -> None:
                 continue
             k, v = line.split("=", 1)
             k, v = k.strip(), v.strip().strip("'\"")
-            if k and k not in os.environ:
+            if k:
                 os.environ[k] = v
     except Exception:
         pass

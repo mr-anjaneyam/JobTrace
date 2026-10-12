@@ -254,8 +254,15 @@ async def upload_resume(file: UploadFile = File(...)):
             except Exception as e:
                 details["error"] = f"Model refinement notice: {e}"[:150]
 
+        # Dynamically set candidate seniority and locations from parsed resume
+        if details.get("seniority"):
+            c.setdefault("candidate", {})["seniority"] = details["seniority"]
+        if details.get("target_locations"):
+            c.setdefault("candidate", {})["locations"] = details["target_locations"]
+        save_config(c)
+
         if details.get("name"):
-            (ROOT / ".resume_details.json").write_text(json.dumps(details), encoding="utf-8")
+            (ROOT / ".resume_details.json").write_text(json.dumps(details, indent=2), encoding="utf-8")
 
         return {"ok": True, "filename": safe_filename, "profile": details}
     except Exception as e:
@@ -299,15 +306,49 @@ def profile():
             if better.get("name"):
                 details = better
         except Exception as e:
-            details["error"] = f"Model refinement failed: {e}"[:150]
+            details["error"] = f"Model refinement notice: {e}"[:150]
+
+    # Dynamically sync seniority if not manually overridden
+    if details.get("seniority") and not c.get("candidate", {}).get("seniority"):
+        c.setdefault("candidate", {})["seniority"] = details["seniority"]
+        save_config(c)
 
     if details.get("name"):
         try:
-            cache_path.write_text(json.dumps(details), encoding="utf-8")
+            cache_path.write_text(json.dumps(details, indent=2), encoding="utf-8")
         except Exception:
             pass
 
     return details
+
+
+@app.post("/api/profile")
+async def update_profile(request: Request):
+    """Endpoint for user to review, edit, and confirm their resume analysis."""
+    data = await request.json()
+    c = get_cfg()
+
+    # Update candidate config with user-confirmed fields
+    c.setdefault("candidate", {})
+    if data.get("seniority"):
+        c["candidate"]["seniority"] = str(data["seniority"]).strip().lower()
+    if "target_locations" in data:
+        locs = data["target_locations"]
+        if isinstance(locs, str):
+            locs = [x.strip() for x in locs.split(",") if x.strip()]
+        elif isinstance(locs, list):
+            locs = [str(x).strip() for x in locs if str(x).strip()]
+        c["candidate"]["locations"] = locs
+    save_config(c)
+
+    # Persist confirmed profile details to cache
+    cache_path = ROOT / ".resume_details.json"
+    try:
+        cache_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    except Exception as e:
+        return {"ok": False, "error": f"Failed to persist confirmed profile: {e}"}
+
+    return {"ok": True, "message": "Profile confirmed and saved successfully.", "profile": data}
 
 
 @app.get("/api/state")

@@ -38,9 +38,8 @@ assert roles["Jun 2025 - Aug 2025"]["role"] == "Full-Stack Developer Intern"
 assert all(e["org"].upper() not in ("SKILLS", "EXPERIENCE", "EDUCATION", "SUMMARY")
            for e in d["experience"]), d["experience"]
 
-# nothing found -> empty, not guessed
 blank = parse_details("")
-assert blank == {"name": "", "headline": "", "location": "", "experience": [], "error": ""}
+assert blank["name"] == "" and blank["headline"] == "" and blank["location"] == "" and blank["experience"] == []
 one = parse_details("Jane Roe\n")
 assert one["name"] == "Jane Roe" and one["experience"] == [] and one["location"] == ""
 

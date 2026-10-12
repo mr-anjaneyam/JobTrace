@@ -219,8 +219,12 @@ async function loadState() {
   renderChecks(jobs.find((j) => j.score !== null) || null);
 }
 
+let currentProfile = {};
+
 async function loadProfile() {
   const d = await fetch("/api/profile").then((r) => r.json());
+  currentProfile = d;
+
   if (d.name) {
     $("p-name").textContent = d.name;
     $("who").textContent = d.name.split(" ")[0];
@@ -228,19 +232,47 @@ async function loadProfile() {
   }
   $("p-headline").textContent = d.headline || "";
   $("p-location").textContent = d.location || "";
+
+  // Seniority Pill
+  const sTag = $("p-seniority-tag");
+  if (sTag) {
+    const band = (d.seniority || "junior").toLowerCase();
+    sTag.textContent = band.toUpperCase();
+    sTag.className = `seniority-pill band-${band}`;
+    sTag.title = d.seniority_reason || `Seniority: ${band}`;
+  }
+
+  // Experience highlights
   const ul = $("exp");
   ul.textContent = "";
 
   if (!(d.experience || []).length) {
     ul.innerHTML = `<li class="muted">${escapeHtml(d.error || "No resume parsed")}</li>`;
-    return;
+  } else {
+    for (const e of d.experience) {
+      const li = document.createElement("li");
+      const sub = e.highlights ? `<div class="sub-muted">${escapeHtml(e.highlights.slice(0, 80))}</div>` : "";
+      li.innerHTML = `<div><div class="org">${escapeHtml(e.org)}</div>
+                      <div class="role">${escapeHtml(e.role)}</div>${sub}</div>
+                      <div class="yr">${escapeHtml(e.years)}</div>`;
+      ul.appendChild(li);
+    }
   }
-  for (const e of d.experience) {
-    const li = document.createElement("li");
-    li.innerHTML = `<div><div class="org">${escapeHtml(e.org)}</div>
-                    <div class="role">${escapeHtml(e.role)}</div></div>
-                    <div class="yr">${escapeHtml(e.years)}</div>`;
-    ul.appendChild(li);
+
+  // Core Skills Chips
+  const skillsBox = $("profile-skills");
+  if (skillsBox) {
+    skillsBox.textContent = "";
+    if (d.skills && d.skills.length) {
+      for (const s of d.skills) {
+        const span = document.createElement("span");
+        span.className = "skill-chip";
+        span.textContent = s;
+        skillsBox.appendChild(span);
+      }
+    } else {
+      skillsBox.innerHTML = '<span class="muted">No skills detected yet</span>';
+    }
   }
 }
 
@@ -415,6 +447,7 @@ async function uploadResumeFile(file) {
       if ($("modal-resume-name")) $("modal-resume-name").textContent = data.filename;
       showToast(`Resume uploaded & parsed: ${data.filename}`, "success");
       await loadProfile();
+      openProfileModal(data.profile || currentProfile);
     } else {
       showToast(data.error || "Failed to upload resume", "error");
     }
@@ -426,6 +459,212 @@ async function uploadResumeFile(file) {
     if (fileInput) fileInput.value = "";
   }
 }
+
+// ==============================================================================
+// Candidate Profile & Resume Analysis Confirmation Modal
+// ==============================================================================
+const profileModal = $("profile-modal");
+const profileModalClose = $("profile-modal-close");
+const profileCancelBtn = $("btn-profile-cancel");
+const profileConfirmBtn = $("btn-profile-confirm");
+const editProfileBtn = $("btn-edit-profile");
+const addExpBtn = $("btn-add-experience");
+
+function addExperienceCard(e = { org: "", role: "", years: "", highlights: "" }) {
+  const container = $("conf-experience-list");
+  if (!container) return;
+  const idx = container.children.length + 1;
+  const card = document.createElement("div");
+  card.className = "exp-card";
+  card.innerHTML = `
+    <div class="exp-card-header">
+      <strong class="font-mono text-accent">Position #${idx}</strong>
+      <button type="button" class="btn-delete-role" title="Delete Position">✕ Remove</button>
+    </div>
+    <div class="exp-card-grid">
+      <div class="form-group">
+        <label>Organization / Company</label>
+        <input type="text" class="input-text conf-exp-org" value="${escapeHtml(e.org || "")}" placeholder="Company Name">
+      </div>
+      <div class="form-group">
+        <label>Job Title / Role</label>
+        <input type="text" class="input-text conf-exp-role" value="${escapeHtml(e.role || "")}" placeholder="e.g. Software Engineer">
+      </div>
+      <div class="form-group">
+        <label>Dates / Duration</label>
+        <input type="text" class="input-text conf-exp-years" value="${escapeHtml(e.years || "")}" placeholder="e.g. 2022 - Present">
+      </div>
+    </div>
+    <div class="form-group">
+      <label>Key Highlights / Tech Stacks</label>
+      <input type="text" class="input-text conf-exp-highlights" value="${escapeHtml(e.highlights || "")}" placeholder="e.g. Built microservices in Python & FastAPI">
+    </div>
+  `;
+  card.querySelector(".btn-delete-role").onclick = () => card.remove();
+  container.appendChild(card);
+}
+
+function openProfileModal(data = null) {
+  const p = data || currentProfile || {};
+  if (!profileModal) return;
+
+  // Seniority hero card
+  const band = (p.seniority || "junior").toLowerCase();
+  const bandTag = $("analysis-band-tag");
+  if (bandTag) {
+    bandTag.textContent = band.toUpperCase();
+    bandTag.className = `band-tag band-${band}`;
+  }
+  if ($("analysis-years-label")) {
+    $("analysis-years-label").textContent = `${p.years_of_experience !== undefined ? p.years_of_experience : "0.0"} Years Exp`;
+  }
+  if ($("analysis-reason-text")) {
+    $("analysis-reason-text").textContent = p.seniority_reason || `Derived seniority band based on resume history.`;
+  }
+  if ($("conf-seniority")) {
+    $("conf-seniority").value = band;
+  }
+
+  // Basic info inputs
+  if ($("conf-name")) $("conf-name").value = p.name || "";
+  if ($("conf-headline")) $("conf-headline").value = p.headline || "";
+  if ($("conf-location")) $("conf-location").value = p.location || "";
+  if ($("conf-target-locations")) {
+    const locs = p.target_locations || (p.location ? ["Remote", p.location] : ["Remote"]);
+    $("conf-target-locations").value = Array.isArray(locs) ? locs.join(", ") : String(locs);
+  }
+  if ($("conf-summary")) $("conf-summary").value = p.summary || "";
+  if ($("conf-skills")) {
+    const skills = p.skills || [];
+    $("conf-skills").value = Array.isArray(skills) ? skills.join(", ") : String(skills);
+  }
+
+  // Work experience cards
+  const expList = $("conf-experience-list");
+  if (expList) {
+    expList.textContent = "";
+    const exps = p.experience || [];
+    if (exps.length) {
+      exps.forEach((e) => addExperienceCard(e));
+    } else {
+      addExperienceCard({ org: "", role: "", years: "", highlights: "" });
+    }
+  }
+
+  // Education
+  if ($("conf-education")) {
+    if (Array.isArray(p.education) && p.education.length) {
+      $("conf-education").value = p.education.map((ed) =>
+        [ed.degree, ed.institution, ed.year].filter(Boolean).join(" — ")
+      ).join("; ");
+    } else if (typeof p.education === "string") {
+      $("conf-education").value = p.education;
+    } else {
+      $("conf-education").value = "";
+    }
+  }
+
+  if ($("profile-modal-status")) $("profile-modal-status").textContent = "";
+  profileModal.style.display = "flex";
+}
+
+function closeProfileModal() {
+  if (profileModal) profileModal.style.display = "none";
+}
+
+async function saveConfirmedProfile() {
+  if (!profileConfirmBtn) return;
+  profileConfirmBtn.disabled = true;
+  profileConfirmBtn.textContent = "Saving Profile…";
+
+  // Gather experience positions
+  const exps = [];
+  document.querySelectorAll("#conf-experience-list .exp-card").forEach((card) => {
+    const org = (card.querySelector(".conf-exp-org")?.value || "").trim();
+    const role = (card.querySelector(".conf-exp-role")?.value || "").trim();
+    const years = (card.querySelector(".conf-exp-years")?.value || "").trim();
+    const highlights = (card.querySelector(".conf-exp-highlights")?.value || "").trim();
+    if (org || role) {
+      exps.push({ org, role, years, highlights });
+    }
+  });
+
+  // Skills
+  const rawSkills = ($("conf-skills")?.value || "").split(",");
+  const cleanSkills = rawSkills.map((s) => s.trim()).filter(Boolean);
+
+  // Target locations
+  const rawLocs = ($("conf-target-locations")?.value || "").split(",");
+  const cleanLocs = rawLocs.map((l) => l.trim()).filter(Boolean);
+
+  // Education
+  const eduStr = ($("conf-education")?.value || "").trim();
+
+  const payload = {
+    name: ($("conf-name")?.value || "").trim(),
+    headline: ($("conf-headline")?.value || "").trim(),
+    location: ($("conf-location")?.value || "").trim(),
+    target_locations: cleanLocs,
+    seniority: $("conf-seniority")?.value || "mid",
+    years_of_experience: currentProfile.years_of_experience || 0.0,
+    seniority_reason: ($("analysis-reason-text")?.textContent || "").trim(),
+    summary: ($("conf-summary")?.value || "").trim(),
+    skills: cleanSkills,
+    experience: exps,
+    education: eduStr ? [{ degree: eduStr, institution: "", year: "" }] : [],
+  };
+
+  try {
+    const res = await fetch("/api/profile", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const d = await res.json();
+    if (d.ok) {
+      showToast(`Profile confirmed! Seniority set to ${payload.seniority.toUpperCase()}.`, "success");
+      closeProfileModal();
+      await loadProfile();
+      await loadState();
+    } else {
+      showToast(d.error || "Failed to save profile", "error");
+    }
+  } catch (err) {
+    showToast(`Error saving profile: ${err.message}`, "error");
+  } finally {
+    profileConfirmBtn.disabled = false;
+    profileConfirmBtn.textContent = "✅ Confirm & Save Profile";
+  }
+}
+
+if ($("conf-seniority")) {
+  $("conf-seniority").onchange = (e) => {
+    const val = (e.target.value || "junior").toLowerCase();
+    const tag = $("analysis-band-tag");
+    if (tag) {
+      tag.textContent = val.toUpperCase();
+      tag.className = `band-tag band-${val}`;
+    }
+  };
+}
+
+if (editProfileBtn) editProfileBtn.onclick = () => openProfileModal(currentProfile);
+if (profileModalClose) profileModalClose.onclick = closeProfileModal;
+if (profileCancelBtn) profileCancelBtn.onclick = closeProfileModal;
+if (profileConfirmBtn) profileConfirmBtn.onclick = saveConfirmedProfile;
+if (addExpBtn) addExpBtn.onclick = () => addExperienceCard();
+
+if (profileModal) {
+  profileModal.onclick = (e) => {
+    if (e.target === profileModal) closeProfileModal();
+  };
+}
+
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && profileModal && profileModal.style.display !== "none") {
+    closeProfileModal();
+  }
+});
 
 if ($("btn-upload-resume")) {
   $("btn-upload-resume").onclick = () => fileInput && fileInput.click();

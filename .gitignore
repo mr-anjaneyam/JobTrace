@@ -7,6 +7,9 @@ config.yaml
 # anchored to the repo root: an unanchored `resume.*` also matches
 # jobtrace/resume.py, which is source, not personal data.
 /resume.*
+resume*.pdf
+/resume*.*
+!.resume.example.txt
 !/resume.example.txt
 .resume_profile.json
 .resume_details.json

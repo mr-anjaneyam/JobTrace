@@ -1094,3 +1094,232 @@ main {
   border-color: #f85149;
   color: #f85149;
 }
+
+/* ==============================================================================
+   Candidate Profile Enhancements & Seniority Badge
+   ============================================================================== */
+.kicker-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.seniority-pill {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 2px 8px;
+  border-radius: 12px;
+  background: rgba(88, 166, 255, 0.15);
+  color: #58a6ff;
+  border: 1px solid rgba(88, 166, 255, 0.3);
+}
+
+.pname-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.btn-icon-edit {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 11px;
+  padding: 2px 7px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.btn-icon-edit:hover {
+  background: var(--surface-raised);
+  color: #58a6ff;
+  border-color: #58a6ff;
+}
+
+.skills-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 16px;
+}
+
+.skill-chip {
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: 11px;
+  font-family: var(--font-mono);
+  padding: 3px 8px;
+  border-radius: 6px;
+}
+
+/* Modal Dialog Large */
+.modal-dialog-lg {
+  width: 860px;
+  max-width: 96vw;
+}
+
+/* Analysis Highlight Card */
+.analysis-highlight-card {
+  background: linear-gradient(135deg, rgba(88, 166, 255, 0.08), rgba(63, 185, 80, 0.08));
+  border: 1px solid rgba(88, 166, 255, 0.3);
+  border-radius: 12px;
+  padding: 16px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+
+.highlight-left {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+  min-width: 240px;
+}
+
+.highlight-kicker {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #58a6ff;
+}
+
+.highlight-band-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.band-tag {
+  font-size: 13px;
+  font-weight: 800;
+  padding: 4px 12px;
+  border-radius: 20px;
+  letter-spacing: 0.04em;
+}
+
+.band-mid {
+  background: rgba(88, 166, 255, 0.2);
+  color: #58a6ff;
+  border: 1px solid rgba(88, 166, 255, 0.4);
+}
+
+.band-senior {
+  background: rgba(163, 113, 247, 0.2);
+  color: #bc8cff;
+  border: 1px solid rgba(163, 113, 247, 0.4);
+}
+
+.band-lead {
+  background: rgba(240, 136, 62, 0.2);
+  color: #f0883e;
+  border: 1px solid rgba(240, 136, 62, 0.4);
+}
+
+.band-junior {
+  background: rgba(63, 185, 80, 0.2);
+  color: #3fb950;
+  border: 1px solid rgba(63, 185, 80, 0.4);
+}
+
+.band-intern {
+  background: rgba(210, 153, 34, 0.2);
+  color: #d29922;
+  border: 1px solid rgba(210, 153, 34, 0.4);
+}
+
+.years-label {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.highlight-reason {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.highlight-right {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 200px;
+}
+
+.highlight-right label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+/* Experience Editor in Profile Modal */
+.btn-subtle-add {
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  color: #58a6ff;
+  padding: 3px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.btn-subtle-add:hover {
+  background: #30363d;
+  color: #fff;
+}
+
+.experience-editor-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.exp-card {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.exp-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.exp-card-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 10px;
+}
+
+.btn-delete-role {
+  background: transparent;
+  border: none;
+  color: #f85149;
+  font-size: 12px;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  transition: background 0.15s;
+}
+
+.btn-delete-role:hover {
+  background: rgba(248, 81, 73, 0.15);
+}
+
