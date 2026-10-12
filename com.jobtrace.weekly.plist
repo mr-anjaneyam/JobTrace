@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.jobtrace.weekly</string>
+
+  <!-- REPLACE __DIR__ with the absolute path to this folder -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>__DIR__/run.sh</string>
+    <string>run</string>
+  </array>
+
+  <!-- Weekly scan and Telegram digest on Monday at 09:00 -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Weekday</key><integer>1</integer>   <!-- 1 = Monday -->
+    <key>Hour</key><integer>9</integer>
+    <key>Minute</key><integer>0</integer>
+  </dict>
+
+  <key>RunAtLoad</key><false/>
+  <key>StandardOutPath</key><string>__DIR__/launchd.out.log</string>
+  <key>StandardErrorPath</key><string>__DIR__/launchd.err.log</string>
+</dict>
+</plist>

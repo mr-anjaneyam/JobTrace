@@ -1,0 +1,25 @@
+Alex Morgan
+San Francisco, CA | alex@example.com | linkedin.com/in/alex-morgan | github.com/alexmorgan
+
+SUMMARY
+Full-stack software engineer with 3 years of production experience building scalable distributed web services, REST & GraphQL APIs, and modern frontend applications.
+
+EXPERIENCE
+Software Engineer | Acme Systems | 2023 - Present
+- Designed and built high-throughput backend microservices using Python, FastAPI, and PostgreSQL.
+- Architected React & TypeScript dashboards serving 50,000 daily active users.
+- Automated CI/CD deployment pipelines on AWS using Docker, Terraform, and GitHub Actions.
+
+Junior Software Engineer | Globex Labs | 2021 - 2023
+- Built backend endpoints in Node.js and MongoDB.
+- Implemented real-time WebSocket notifications and Redis caching layers.
+
+SKILLS
+Languages: Python, TypeScript, JavaScript, SQL, Go
+Frameworks: FastAPI, React, Node.js, Next.js, Django, Express
+Databases: PostgreSQL, MongoDB, Redis, SQLite
+Infrastructure & Tools: AWS, Docker, Kubernetes, Terraform, Git, Linux, CI/CD
+Concepts: REST APIs, GraphQL, Microservices, System Design, Machine Learning (PyTorch)
+
+EDUCATION
+B.S. in Computer Science | University of California, Berkeley | 2017 - 2021

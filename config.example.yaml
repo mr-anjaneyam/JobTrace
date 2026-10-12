@@ -1,0 +1,88 @@
+# ==============================================================================
+# JobTrace — Configuration
+# ==============================================================================
+
+# ---- Telegram Notifications ----
+# Create a bot via @BotFather on Telegram, get your token.
+# Start a chat with your bot, then get your chat ID (via @userinfobot or https://api.telegram.org/bot<TOKEN>/getUpdates).
+# You can also supply TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID as environment variables.
+telegram:
+  bot_token: "123456789:ABCdefGHIjklMNOpqrsTUVwxyz"
+  chat_id: "987654321"
+
+# ---- Candidate Profile ----
+candidate:
+  # Target seniority band:
+  #   intern   - internships & students (caps senior/staff/director roles at 3/10)
+  #   junior   - entry-level & 0-2 yrs (junior roles favored; caps senior/staff at 3/10)
+  #   mid      - 2-5 yrs (mid-level roles favored; caps executive roles)
+  #   senior   - 5+ yrs (senior & staff roles favored; caps entry-level internships)
+  #   lead     - tech lead / staff / principal (caps junior roles)
+  #   any      - disable seniority capping entirely
+  seniority: junior
+
+  # Target preferred locations for keyword scoring (empty = anywhere):
+  locations: ["Remote", "San Francisco", "New York", "London", "Bengaluru"]
+
+# ---- Your Resume Path ----
+resume_path: resume.pdf                  # PDF or plaintext CV
+
+# ---- Watched Companies ----
+# board: greenhouse | lever | ashby | workable | workday | oracle | atlassian
+# slug: company board handle
+companies:
+  - { name: 'Anthropic', board: greenhouse, slug: 'anthropic', domain: anthropic.com }
+  - { name: 'Stripe', board: greenhouse, slug: 'stripe', domain: stripe.com }
+  - { name: 'Notion', board: ashby, slug: 'notion', domain: notion.so }
+  - { name: 'Figma', board: greenhouse, slug: 'figma', domain: figma.com }
+  - { name: 'Databricks', board: greenhouse, slug: 'databricks', domain: databricks.com }
+  - { name: 'Ramp', board: ashby, slug: 'ramp', domain: ramp.com }
+  - { name: 'Adobe', board: workday, slug: 'adobe/wd5/external_experienced', domain: adobe.com }
+  - { name: 'NVIDIA', board: workday, slug: 'nvidia/wd5/NVIDIAExternalCareerSite', domain: nvidia.com }
+  - { name: 'Salesforce', board: workday, slug: 'salesforce/wd12/External_Career_Site', domain: salesforce.com }
+  - { name: 'Fidelity', board: workday, slug: 'fmr/wd1/FidelityCareers', domain: fidelity.com }
+  - { name: 'Oracle', board: oracle, slug: 'eeho.fa.us2.oraclecloud.com/CX_1', domain: oracle.com }
+  - { name: 'Dell', board: oracle, slug: 'enterpriseplatform.dell.com/CX_1', domain: dell.com }
+  - { name: 'Atlassian', board: atlassian, slug: 'atlassian', domain: atlassian.com }
+
+# ---- Broad Remote Discovery (Aggregators) ----
+discovery:
+  enabled: true
+  queries: ["full stack developer", "backend engineer", "react developer", "python developer", "ai engineer"]
+  max_per_query: 40
+  expire_after_days: 14                 # Stale aggregator roles expire after this many days
+
+# ---- Filters ----
+filters:
+  # Title must include at least one of these substrings (empty = keep all)
+  title_include: ["engineer", "developer", "scientist", "intern", "analyst"]
+  # Exclude postings with these substrings in title
+  title_exclude: ["staff", "principal", "director", "manager", "vp ", "vice president", "head of"]
+  # Locations to accept (empty = anywhere)
+  locations: []
+
+# ---- LLM Decision Engine ----
+llm:
+  # Provider: xkiro | openrouter | openai | ollama | cursor | jev | local | none
+  provider: xkiro
+  model: mistralai/mistral-large-2512
+  min_score: 6                          # 0-10 match threshold to qualify for alerts/digests
+
+  # Token Economy & Budget
+  triage: false                         # Settle obviously hopeless jobs locally for free
+  triage_floor: 3                       # Local score below this settled without LLM tokens
+  batch_size: 25                        # Jobs per LLM request
+  tokens_per_batch: 3400
+  daily_token_limit: 1000000            # Daily token budget ceiling
+  max_to_score: 5000                    # Maximum backlog unscored jobs to process per run
+
+# ---- Same-Day Alerts ----
+alerts:
+  # Companies to check on daily alert runs (keep short for fast sub-second runs)
+  companies: [Anthropic, Stripe, Figma, Adobe, NVIDIA, Atlassian]
+  min_score: 6
+  max_per_alert: 15                     # Max jobs sent in one alert message
+
+# ---- Weekly Digest ----
+digest:
+  max_jobs: 40                          # Max jobs included in weekly Telegram digest

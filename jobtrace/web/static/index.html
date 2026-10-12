@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>JobTrace — Career Intelligence</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="mark">⚡</span>
+    <span class="brandname">JobTrace <small class="v2">2.0</small></span>
+  </div>
+  <div class="stats">
+    <div class="stat"><div class="label">Checked</div>
+      <div class="value"><span id="s-checked">0</span><span class="of">/<span id="s-total">0</span></span></div></div>
+    <div class="stat"><div class="label">Matches</div><div class="value" id="s-hire">0</div></div>
+    <div class="stat"><div class="label">Avg Match</div><div class="value" id="s-avg">0.00</div></div>
+    <div class="stat"><div class="label">Scan Time</div><div class="value"><span id="s-time">0.0</span>s</div></div>
+    <div class="stat"><div class="label">Channel</div><div class="value badge-tg">Telegram</div></div>
+  </div>
+</header>
+
+<div class="titlerow">
+  <h1>Scoring career boards for <span id="who">you</span></h1>
+  <div class="controls">
+    <input id="q" class="search" type="search" autocomplete="off"
+           placeholder="Search role, skills or company — e.g. React, Stripe, Remote">
+    <select id="minscore" class="sel" title="Minimum match">
+      <option value="0">Any Match</option>
+      <option value="5">5+ Match</option>
+      <option value="6">6+ Match</option>
+      <option value="7">7+ Match</option>
+      <option value="8">8+ Match</option>
+    </select>
+    <select id="co" class="sel" title="Company"><option value="">All Companies</option></select>
+    <label class="chk"><input type="checkbox" id="newonly"> New this week</label>
+    <button id="scan" class="scanbtn">⚡ Run Scan</button>
+  </div>
+</div>
+
+<main>
+  <section class="gridwrap">
+    <div id="grid" class="grid" aria-label="Job postings mosaic tinted by match"></div>
+    <div class="legend">
+      <span>Lower fit</span><i class="ramp"></i><span>High fit</span>
+      <span class="sep"></span>
+      <span id="gridnote">Ready — press Run Scan</span>
+    </div>
+  </section>
+
+  <aside class="panel">
+    <div class="row">
+      <div class="profile">
+        <div class="avatar" id="avatar">?</div>
+        <div>
+          <div class="kicker">Candidate Profile</div>
+          <div class="pname" id="p-name">—</div>
+          <div class="pmeta" id="p-headline"></div>
+          <div class="pmeta" id="p-location"></div>
+        </div>
+      </div>
+      <div class="looking" id="looking">
+        <div class="kicker">Inspecting Role</div>
+        <div class="lk-company" id="lk-company">Idle</div>
+        <div class="lk-title" id="lk-title"></div>
+        <div class="lk-score" id="lk-score"></div>
+      </div>
+    </div>
+
+    <div class="kicker sec">Experience Highlights</div>
+    <ul class="exp" id="exp"><li class="muted">Loading profile…</li></ul>
+
+    <div class="kicker sec">Sub-Score Fit Breakdown</div>
+    <ul class="checks" id="checks"></ul>
+
+    <div class="kicker sec">Top Matches</div>
+    <div class="tops" id="tops"><div class="muted">No jobs scored yet</div></div>
+  </aside>
+</main>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

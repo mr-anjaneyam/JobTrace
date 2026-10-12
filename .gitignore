@@ -1,0 +1,23 @@
+# secrets and personal data — never commit these
+.env
+.env.*
+!.env.example
+run.sh
+config.yaml
+# anchored to the repo root: an unanchored `resume.*` also matches
+# jobtrace/resume.py, which is source, not personal data.
+/resume.*
+!/resume.example.txt
+.resume_profile.json
+.resume_details.json
+
+# generated
+.venv/
+__pycache__/
+*.pyc
+*.db
+*.log
+digest_preview.html
+alert_preview.html
+
+.DS_Store
