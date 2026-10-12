@@ -67,7 +67,19 @@ python3 -m jobtrace.main test
 
 ### 3. Add Your Resume
 
-Drop your resume into the project directory (e.g., `resume.pdf` or `resume.txt`) and configure `resume_path` in `config.yaml`.
+You can add your resume in either of two ways:
+- **Directly in the Web UI (Recommended):** Click **Upload Resume** or drag & drop your PDF or TXT resume onto the Candidate Profile card in the web dashboard.
+- **Via configuration:** Place your resume in the project root (e.g. `resume.pdf`) and reference it in `config.yaml` (`resume_path: resume.pdf`).
+
+---
+
+## ⚙️ Admin Settings & In-UI Configuration
+
+Everything in JobTrace can be managed directly through the Web UI via the **⚙️ Admin Settings** modal:
+- **Telegram Bot Configuration:** Set Bot Token and configure **multiple** recipient user/chat IDs with instant in-browser **Send Test Ping** verification.
+- **AI Engine & API Keys:** Select your scoring provider (Xkiro, OpenRouter, OpenAI, Cursor, Ollama), model identifier, and threshold, and securely configure API keys saved into `.env`.
+- **Candidate Preferences:** Adjust target seniority bands and preferred locations live.
+- **Resume Management:** Upload and parse new resumes on the fly.
 
 ---
 

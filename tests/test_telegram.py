@@ -41,7 +41,7 @@ def test_telegram_formatting():
     digest_html = telegram.render_digest(jobs, [{"title": "Old Role", "company": "Stripe"}], "Week of 12 Oct")
     assert "JOBTRACE — Weekly Digest" in digest_html
     assert "<s>Old Role</s>" in digest_html
-    print("✓ telegram formatting tests pass")
+    print("[OK] telegram formatting tests pass")
 
 
 def test_telegram_chunking():
@@ -66,10 +66,22 @@ def test_telegram_chunking():
     finally:
         telegram.send_message = orig_send
 
-    print("✓ telegram chunking tests pass")
+    print("[OK] telegram chunking tests pass")
+
+
+def test_telegram_multi_chat_ids():
+    cfg1 = {"telegram": {"chat_ids": ["123", "456", "789"]}}
+    assert telegram.get_chat_ids(cfg1) == ["123", "456", "789"]
+
+    cfg2 = {"telegram": {"chat_id": "111, 222; 333\n444"}}
+    assert telegram.get_chat_ids(cfg2) == ["111", "222", "333", "444"]
+
+    print("[OK] telegram multi-chat ID tests pass")
 
 
 if __name__ == "__main__":
     test_telegram_formatting()
     test_telegram_chunking()
+    test_telegram_multi_chat_ids()
     print("All Telegram tests PASSED!")
+

@@ -366,6 +366,295 @@ function showMatchMade() {
   });
 }
 
+// ==============================================================================
+// Toast Notifications
+// ==============================================================================
+let toastTimer = null;
+function showToast(message, type = "success") {
+  const el = $("toast");
+  if (!el) return;
+  clearTimeout(toastTimer);
+  el.className = `toast ${type}`;
+  el.innerHTML = `<span>${type === "success" ? "✅" : "⚠️"}</span> <span>${escapeHtml(message)}</span>`;
+  el.style.display = "flex";
+  toastTimer = setTimeout(() => {
+    el.style.display = "none";
+  }, 4000);
+}
+
+// ==============================================================================
+// Resume Upload & Drag-and-Drop
+// ==============================================================================
+const fileInput = $("resume-file-input");
+const dropzone = $("resume-dropzone");
+
+async function uploadResumeFile(file) {
+  if (!file) return;
+  const ext = file.name.slice(file.name.lastIndexOf(".")).toLowerCase();
+  if (![".pdf", ".txt", ".md", ".docx", ".rtf"].includes(ext)) {
+    showToast(`Unsupported file type: ${ext}. Please upload a PDF or TXT file.`, "error");
+    return;
+  }
+
+  const uploadBtn = $("btn-upload-resume");
+  if (uploadBtn) { uploadBtn.disabled = true; uploadBtn.textContent = "Uploading…"; }
+  const modalUploadBtn = $("btn-modal-upload-resume");
+  if (modalUploadBtn) { modalUploadBtn.disabled = true; modalUploadBtn.textContent = "Uploading…"; }
+
+  const formData = new FormData();
+  formData.append("file", file);
+
+  try {
+    const res = await fetch("/api/upload-resume", {
+      method: "POST",
+      body: formData,
+    });
+    const data = await res.json();
+    if (data.ok) {
+      if ($("resume-filename")) $("resume-filename").textContent = data.filename;
+      if ($("modal-resume-name")) $("modal-resume-name").textContent = data.filename;
+      showToast(`Resume uploaded & parsed: ${data.filename}`, "success");
+      await loadProfile();
+    } else {
+      showToast(data.error || "Failed to upload resume", "error");
+    }
+  } catch (err) {
+    showToast(`Network error uploading resume: ${err.message}`, "error");
+  } finally {
+    if (uploadBtn) { uploadBtn.disabled = false; uploadBtn.textContent = "Upload Resume"; }
+    if (modalUploadBtn) { modalUploadBtn.disabled = false; modalUploadBtn.textContent = "Upload New Resume"; }
+    if (fileInput) fileInput.value = "";
+  }
+}
+
+if ($("btn-upload-resume")) {
+  $("btn-upload-resume").onclick = () => fileInput && fileInput.click();
+}
+if ($("btn-modal-upload-resume")) {
+  $("btn-modal-upload-resume").onclick = () => fileInput && fileInput.click();
+}
+if (fileInput) {
+  fileInput.onchange = (e) => {
+    if (e.target.files && e.target.files[0]) {
+      uploadResumeFile(e.target.files[0]);
+    }
+  };
+}
+
+if (dropzone) {
+  ["dragenter", "dragover"].forEach((evt) => {
+    dropzone.addEventListener(evt, (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      dropzone.classList.add("dragover");
+    });
+  });
+
+  ["dragleave", "drop"].forEach((evt) => {
+    dropzone.addEventListener(evt, (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      dropzone.classList.remove("dragover");
+    });
+  });
+
+  dropzone.addEventListener("drop", (e) => {
+    if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]) {
+      uploadResumeFile(e.dataTransfer.files[0]);
+    }
+  });
+}
+
+// ==============================================================================
+// Admin Settings Modal Logic
+// ==============================================================================
+const modal = $("settings-modal");
+const settingsBtn = $("btn-settings");
+const settingsCloseBtn = $("settings-close");
+const settingsCancelBtn = $("btn-settings-cancel");
+const settingsSaveBtn = $("btn-settings-save");
+const testTgBtn = $("btn-test-telegram");
+const testTgResult = $("telegram-test-result");
+
+function openSettingsModal() {
+  if (!modal) return;
+  modal.style.display = "flex";
+  loadSettings();
+}
+
+function closeSettingsModal() {
+  if (!modal) return;
+  modal.style.display = "none";
+  if (testTgResult) {
+    testTgResult.style.display = "none";
+    testTgResult.textContent = "";
+  }
+}
+
+async function loadSettings() {
+  try {
+    const res = await fetch("/api/settings");
+    const d = await res.json();
+
+    // Telegram
+    if ($("cfg-bot-token")) $("cfg-bot-token").value = d.telegram.bot_token || "";
+    if ($("cfg-chat-ids")) $("cfg-chat-ids").value = d.telegram.chat_ids_raw || (d.telegram.chat_ids || []).join(", ");
+
+    // LLM
+    if ($("cfg-llm-provider")) $("cfg-llm-provider").value = d.llm.provider || "xkiro";
+    if ($("cfg-llm-model")) $("cfg-llm-model").value = d.llm.model || "";
+    if ($("cfg-min-score")) $("cfg-min-score").value = d.llm.min_score !== undefined ? d.llm.min_score : 6;
+    if ($("cfg-llm-triage")) $("cfg-llm-triage").checked = !!d.llm.triage;
+
+    // API Keys
+    const keys = d.api_keys || {};
+    if ($("key-xkiro")) $("key-xkiro").value = keys.XKIRO_API_KEY || "";
+    if ($("key-openai")) $("key-openai").value = keys.OPENAI_API_KEY || "";
+    if ($("key-openrouter")) $("key-openrouter").value = keys.OPENROUTER_API_KEY || "";
+    if ($("key-cursor")) $("key-cursor").value = keys.CURSOR_API_KEY || "";
+    if ($("key-anthropic")) $("key-anthropic").value = keys.ANTHROPIC_API_KEY || "";
+
+    // Candidate
+    if ($("cfg-seniority")) $("cfg-seniority").value = d.candidate.seniority || "junior";
+    if ($("cfg-locations")) $("cfg-locations").value = (d.candidate.locations || []).join(", ");
+    if ($("modal-resume-name")) $("modal-resume-name").textContent = d.resume_path || "resume.pdf";
+    if ($("resume-filename")) $("resume-filename").textContent = d.resume_path || "resume.pdf";
+  } catch (err) {
+    showToast(`Failed to load settings: ${err.message}`, "error");
+  }
+}
+
+async function saveSettings() {
+  if (!settingsSaveBtn) return;
+  settingsSaveBtn.disabled = true;
+  settingsSaveBtn.textContent = "Saving…";
+
+  const payload = {
+    telegram: {
+      bot_token: $("cfg-bot-token") ? $("cfg-bot-token").value.trim() : "",
+      chat_ids: $("cfg-chat-ids") ? $("cfg-chat-ids").value.trim() : "",
+    },
+    llm: {
+      provider: $("cfg-llm-provider") ? $("cfg-llm-provider").value : "xkiro",
+      model: $("cfg-llm-model") ? $("cfg-llm-model").value.trim() : "",
+      min_score: $("cfg-min-score") ? Number($("cfg-min-score").value) : 6,
+      triage: $("cfg-llm-triage") ? $("cfg-llm-triage").checked : false,
+    },
+    candidate: {
+      seniority: $("cfg-seniority") ? $("cfg-seniority").value : "junior",
+      locations: $("cfg-locations") ? $("cfg-locations").value : "",
+    },
+    api_keys: {
+      XKIRO_API_KEY: $("key-xkiro") ? $("key-xkiro").value.trim() : "",
+      OPENAI_API_KEY: $("key-openai") ? $("key-openai").value.trim() : "",
+      OPENROUTER_API_KEY: $("key-openrouter") ? $("key-openrouter").value.trim() : "",
+      CURSOR_API_KEY: $("key-cursor") ? $("key-cursor").value.trim() : "",
+      ANTHROPIC_API_KEY: $("key-anthropic") ? $("key-anthropic").value.trim() : "",
+    },
+  };
+
+  try {
+    const res = await fetch("/api/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const d = await res.json();
+    if (d.ok) {
+      showToast("Settings and API keys saved successfully!", "success");
+      closeSettingsModal();
+      loadState();
+    } else {
+      showToast(d.message || "Failed to save settings", "error");
+    }
+  } catch (err) {
+    showToast(`Error saving settings: ${err.message}`, "error");
+  } finally {
+    settingsSaveBtn.disabled = false;
+    settingsSaveBtn.textContent = "Save Settings";
+  }
+}
+
+async function testTelegramConnection() {
+  if (!testTgBtn) return;
+  testTgBtn.disabled = true;
+  testTgBtn.textContent = "Sending Ping…";
+  testTgResult.style.display = "block";
+  testTgResult.className = "test-result";
+  testTgResult.textContent = "Connecting to Telegram Bot API…";
+
+  const bot_token = $("cfg-bot-token") ? $("cfg-bot-token").value.trim() : "";
+  const chat_ids = $("cfg-chat-ids") ? $("cfg-chat-ids").value.trim() : "";
+
+  try {
+    const res = await fetch("/api/test-telegram", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ bot_token, chat_ids }),
+    });
+    const d = await res.json();
+    if (d.ok) {
+      testTgResult.className = "test-result success";
+      testTgResult.textContent = d.message;
+    } else {
+      testTgResult.className = "test-result error";
+      testTgResult.textContent = d.message;
+    }
+  } catch (err) {
+    testTgResult.className = "test-result error";
+    testTgResult.textContent = `Request failed: ${err.message}`;
+  } finally {
+    testTgBtn.disabled = false;
+    testTgBtn.textContent = "🔔 Send Test Ping";
+  }
+}
+
+// Tabs in Settings Modal
+document.querySelectorAll(".modal-tab").forEach((tab) => {
+  tab.onclick = () => {
+    document.querySelectorAll(".modal-tab").forEach((t) => t.classList.remove("active"));
+    document.querySelectorAll(".tab-pane").forEach((p) => p.classList.remove("active"));
+    tab.classList.add("active");
+    const target = $(tab.dataset.tab);
+    if (target) target.classList.add("active");
+  };
+});
+
+// Toggle password visibility
+document.querySelectorAll(".btn-toggle-vis").forEach((btn) => {
+  btn.onclick = () => {
+    const targetId = btn.dataset.for;
+    const input = $(targetId);
+    if (input) {
+      if (input.type === "password") {
+        input.type = "text";
+        btn.textContent = "🙈";
+      } else {
+        input.type = "password";
+        btn.textContent = "👁️";
+      }
+    }
+  };
+});
+
+if (settingsBtn) settingsBtn.onclick = openSettingsModal;
+if (settingsCloseBtn) settingsCloseBtn.onclick = closeSettingsModal;
+if (settingsCancelBtn) settingsCancelBtn.onclick = closeSettingsModal;
+if (settingsSaveBtn) settingsSaveBtn.onclick = saveSettings;
+if (testTgBtn) testTgBtn.onclick = testTelegramConnection;
+
+if (modal) {
+  modal.onclick = (e) => {
+    if (e.target === modal) closeSettingsModal();
+  };
+}
+
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && modal && modal.style.display !== "none") {
+    closeSettingsModal();
+  }
+});
+
 $("scan").onclick = startScan;
 $("q").addEventListener("input", onFilterChange);
 $("minscore").addEventListener("change", renderGrid);
@@ -375,5 +664,13 @@ $("q").addEventListener("keydown", (e) => {
   if (e.key === "Escape") { $("q").value = ""; searchIds = null; renderGrid(); }
 });
 
+// Initial load
 loadProfile();
 loadState();
+// Populate initial resume filename on badge
+fetch("/api/settings").then(r => r.json()).then(d => {
+  if (d && d.resume_path && $("resume-filename")) {
+    $("resume-filename").textContent = d.resume_path;
+  }
+}).catch(() => {});
+

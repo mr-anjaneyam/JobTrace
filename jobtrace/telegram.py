@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import html
 import os
+import re
 import time
 from typing import Any
 
@@ -16,19 +17,54 @@ TELEGRAM_API_BASE = "https://api.telegram.org"
 MAX_MESSAGE_LENGTH = 4000
 
 
-def get_credentials(cfg: dict) -> tuple[str, str]:
-    """Retrieve Telegram bot token and chat ID from config or environment variables."""
+def get_bot_token(cfg: dict) -> str:
+    """Retrieve Telegram bot token from config or environment variables."""
     t_cfg = cfg.get("telegram") or {}
-    token = (
+    return (
         os.environ.get("TELEGRAM_BOT_TOKEN")
-        or t_cfg.get("bot_token")
-        or ""
+        or str(t_cfg.get("bot_token") or "")
     ).strip()
-    chat_id = (
-        os.environ.get("TELEGRAM_CHAT_ID")
-        or str(t_cfg.get("chat_id") or "")
-    ).strip()
-    return token, chat_id
+
+
+def get_chat_ids(cfg: dict) -> list[str]:
+    """Retrieve all configured Telegram chat/user IDs as a clean list of strings.
+    
+    Supports single ID, comma/newline-separated strings, or lists in config/env.
+    """
+    t_cfg = cfg.get("telegram") or {}
+    raw_candidates = [
+        os.environ.get("TELEGRAM_CHAT_IDS"),
+        os.environ.get("TELEGRAM_CHAT_ID"),
+        t_cfg.get("chat_ids"),
+        t_cfg.get("chat_id"),
+    ]
+    ids: list[str] = []
+    for raw in raw_candidates:
+        if not raw:
+            continue
+        if isinstance(raw, (list, tuple, set)):
+            for item in raw:
+                s = str(item).strip()
+                if s and s not in ids:
+                    ids.append(s)
+        elif isinstance(raw, str):
+            for part in re.split(r"[,;\n\s]+", raw):
+                s = part.strip()
+                if s and s not in ids:
+                    ids.append(s)
+        elif isinstance(raw, int):
+            s = str(raw)
+            if s not in ids:
+                ids.append(s)
+
+    return ids
+
+
+def get_credentials(cfg: dict) -> tuple[str, str]:
+    """Legacy helper returning (bot_token, primary_chat_id)."""
+    token = get_bot_token(cfg)
+    chat_ids = get_chat_ids(cfg)
+    return token, chat_ids[0] if chat_ids else ""
 
 
 def send_message(
@@ -199,9 +235,15 @@ def render_digest(
 # --------------------------------------------------------------------------
 
 def send_alert(cfg: dict, rows: list[Any], label: str) -> None:
-    bot_token, chat_id = get_credentials(cfg)
+    """Broadcast new opening alert to all configured Telegram recipients."""
+    bot_token = get_bot_token(cfg)
+    chat_ids = get_chat_ids(cfg)
+    if not bot_token or not chat_ids:
+        raise ValueError("Telegram bot_token and at least one chat_id must be configured.")
+
     msg = render_alert(rows, label)
-    send_chunked(bot_token, chat_id, msg)
+    for cid in chat_ids:
+        send_chunked(bot_token, cid, msg)
 
 
 def send_digest(
@@ -211,20 +253,40 @@ def send_digest(
     period_label: str,
     notes: list[str] | None = None,
 ) -> None:
-    bot_token, chat_id = get_credentials(cfg)
+    """Broadcast weekly digest to all configured Telegram recipients."""
+    bot_token = get_bot_token(cfg)
+    chat_ids = get_chat_ids(cfg)
+    if not bot_token or not chat_ids:
+        raise ValueError("Telegram bot_token and at least one chat_id must be configured.")
+
     msg = render_digest(new_jobs, closed_jobs, period_label, notes)
-    send_chunked(bot_token, chat_id, msg)
+    for cid in chat_ids:
+        send_chunked(bot_token, cid, msg)
 
 
-def test_telegram(cfg: dict) -> tuple[bool, str]:
-    """Test Telegram connection by calling getMe and sending a ping."""
-    bot_token, chat_id = get_credentials(cfg)
-    if not bot_token or not chat_id:
-        return False, "TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID must be set in config.yaml or environment."
+def test_telegram(
+    cfg: dict,
+    bot_token: str | None = None,
+    chat_ids: list[str] | str | None = None,
+) -> tuple[bool, str]:
+    """Test Telegram connection by calling getMe and sending a ping to each configured recipient."""
+    token = (bot_token or get_bot_token(cfg)).strip()
+
+    targets: list[str] = []
+    if chat_ids is not None:
+        if isinstance(chat_ids, (list, tuple, set)):
+            targets = [str(x).strip() for x in chat_ids if str(x).strip()]
+        elif isinstance(chat_ids, str):
+            targets = [p.strip() for p in re.split(r"[,;\n\s]+", chat_ids) if p.strip()]
+    else:
+        targets = get_chat_ids(cfg)
+
+    if not token or not targets:
+        return False, "Bot token and at least one Telegram chat ID must be specified."
 
     # 1. Test bot validity
     try:
-        r = requests.get(f"{TELEGRAM_API_BASE}/bot{bot_token}/getMe", timeout=15)
+        r = requests.get(f"{TELEGRAM_API_BASE}/bot{token}/getMe", timeout=15)
         if r.status_code != 200:
             return False, f"Invalid bot token (HTTP {r.status_code}): {r.text}"
         data = r.json()
@@ -232,16 +294,27 @@ def test_telegram(cfg: dict) -> tuple[bool, str]:
     except Exception as e:
         return False, f"Network error contacting Telegram: {e}"
 
-    # 2. Test sending message
-    try:
-        text = (
-            f"✅ <b>JobTrace — Telegram Bot Connected!</b>\n"
-            f"🤖 Bot: @{bot_user}\n"
-            f"💬 Chat ID: <code>{chat_id}</code>\n"
-            f"⏰ Timestamp: {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n"
-            f"Your daily alerts and weekly digests will arrive in this chat."
-        )
-        send_message(bot_token, chat_id, text)
-        return True, f"Success! Verified bot @{bot_user} and sent test message to chat {chat_id}."
-    except Exception as e:
-        return False, f"Bot token valid (@{bot_user}) but failed to send message to chat {chat_id}: {e}"
+    # 2. Test sending message to all target chat IDs
+    successes: list[str] = []
+    failures: list[str] = []
+    for cid in targets:
+        try:
+            text = (
+                f"✅ <b>JobTrace — Telegram Bot Connected!</b>\n"
+                f"🤖 Bot: @{bot_user}\n"
+                f"💬 Chat ID: <code>{cid}</code>\n"
+                f"⏰ Timestamp: {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+                f"Your daily alerts and weekly digests will arrive in this chat."
+            )
+            send_message(token, cid, text)
+            successes.append(cid)
+        except Exception as e:
+            failures.append(f"{cid} ({e})")
+
+    if not failures:
+        return True, f"Success! Verified bot @{bot_user} and delivered test ping to {len(successes)} recipient(s): {', '.join(successes)}."
+    elif successes:
+        return True, f"Partial success with bot @{bot_user}: Sent to {', '.join(successes)}, but failed for {', '.join(failures)}."
+    else:
+        return False, f"Bot token valid (@{bot_user}) but failed to deliver to all chat ID(s): {', '.join(failures)}."
+

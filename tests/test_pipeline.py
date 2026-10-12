@@ -97,7 +97,7 @@ def test_unified_pipeline():
     assert row3["matches_filter"] == 0
     assert row3["closed_at"] is None
 
-    print("✓ unified pipeline tests pass")
+    print("[OK] unified pipeline tests pass")
 
 
 if __name__ == "__main__":

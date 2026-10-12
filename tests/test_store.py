@@ -46,7 +46,7 @@ def test_upsert_and_diffing():
     s.upsert([make_job("j1"), make_job("j2")])
     assert s.mark_closed(["Acme"]) == []
     assert s.stats()["open"] == 2
-    print("✓ upsert and diffing tests pass")
+    print("[OK] upsert and diffing tests pass")
 
 
 def test_presence_vs_filter_bug_fix():
@@ -66,7 +66,7 @@ def test_presence_vs_filter_bug_fix():
     row = s.db.execute("SELECT closed_at, matches_filter FROM jobs WHERE id='eng1'").fetchone()
     assert row["closed_at"] is None
     assert row["matches_filter"] == 0
-    print("✓ presence vs filter bug fix passes")
+    print("[OK] presence vs filter bug fix passes")
 
 
 def test_alert_queue_isolation():
@@ -92,7 +92,7 @@ def test_alert_queue_isolation():
     assert [r["id"] for r in s.unalerted(companies=["WatchedCo"])] == []
     # UnwatchedCo and DiscoveryCo still preserved as unalerted!
     assert {r["id"] for r in s.unalerted()} == {"b1", "d1"}
-    print("✓ alert queue isolation test passes")
+    print("[OK] alert queue isolation test passes")
 
 
 def test_fts5_search():
@@ -110,7 +110,7 @@ def test_fts5_search():
     assert s.search("Stripe") == ["j1"]
     assert s.search("AI Alignment PyTorch") == ["j3"]
     assert s.search("NonexistentStack") == []
-    print("✓ FTS5 search tests pass")
+    print("[OK] FTS5 search tests pass")
 
 
 if __name__ == "__main__":

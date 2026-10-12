@@ -15,13 +15,18 @@
     <span class="mark">⚡</span>
     <span class="brandname">JobTrace <small class="v2">2.0</small></span>
   </div>
-  <div class="stats">
-    <div class="stat"><div class="label">Checked</div>
-      <div class="value"><span id="s-checked">0</span><span class="of">/<span id="s-total">0</span></span></div></div>
-    <div class="stat"><div class="label">Matches</div><div class="value" id="s-hire">0</div></div>
-    <div class="stat"><div class="label">Avg Match</div><div class="value" id="s-avg">0.00</div></div>
-    <div class="stat"><div class="label">Scan Time</div><div class="value"><span id="s-time">0.0</span>s</div></div>
-    <div class="stat"><div class="label">Channel</div><div class="value badge-tg">Telegram</div></div>
+  <div class="topbar-right">
+    <div class="stats">
+      <div class="stat"><div class="label">Checked</div>
+        <div class="value"><span id="s-checked">0</span><span class="of">/<span id="s-total">0</span></span></div></div>
+      <div class="stat"><div class="label">Matches</div><div class="value" id="s-hire">0</div></div>
+      <div class="stat"><div class="label">Avg Match</div><div class="value" id="s-avg">0.00</div></div>
+      <div class="stat"><div class="label">Scan Time</div><div class="value"><span id="s-time">0.0</span>s</div></div>
+      <div class="stat"><div class="label">Channel</div><div class="value badge-tg">Telegram</div></div>
+    </div>
+    <button id="btn-settings" class="settings-btn" title="Configure Bot, API Keys, and Preferences">
+      <span class="gear-icon">⚙️</span> Admin Settings
+    </button>
   </div>
 </header>
 
@@ -72,6 +77,19 @@
       </div>
     </div>
 
+    <!-- Resume Dropzone & Upload Button -->
+    <div class="resume-uploader" id="resume-dropzone">
+      <input type="file" id="resume-file-input" accept=".pdf,.txt,.docx,.md,.rtf" style="display: none;">
+      <div class="resume-status-row">
+        <div class="resume-file-info">
+          <span class="resume-icon">📄</span>
+          <span id="resume-filename" class="resume-name" title="Active resume file">Loading...</span>
+        </div>
+        <button type="button" id="btn-upload-resume" class="btn-upload">Upload Resume</button>
+      </div>
+      <div class="drop-hint" id="drop-hint">Click button or drag & drop PDF / TXT here</div>
+    </div>
+
     <div class="kicker sec">Experience Highlights</div>
     <ul class="exp" id="exp"><li class="muted">Loading profile…</li></ul>
 
@@ -82,6 +100,182 @@
     <div class="tops" id="tops"><div class="muted">No jobs scored yet</div></div>
   </aside>
 </main>
+
+<!-- Admin Settings Modal -->
+<div id="settings-modal" class="modal-backdrop" style="display: none;">
+  <div class="modal-dialog">
+    <div class="modal-header">
+      <div class="modal-title-group">
+        <div class="modal-title-line">
+          <span class="modal-icon">⚙️</span>
+          <h2>Admin Settings</h2>
+        </div>
+        <span class="modal-subtitle">Configure Telegram Bot, AI Engine, API Keys & Preferences</span>
+      </div>
+      <button class="modal-close" id="settings-close" title="Close Settings">&times;</button>
+    </div>
+
+    <div class="modal-tabs">
+      <button class="modal-tab active" data-tab="tab-telegram">Telegram Notifications</button>
+      <button class="modal-tab" data-tab="tab-llm">AI Engine & API Keys</button>
+      <button class="modal-tab" data-tab="tab-candidate">Candidate & Resume</button>
+    </div>
+
+    <div class="modal-body">
+      <!-- Tab 1: Telegram Notifications -->
+      <div class="tab-pane active" id="tab-telegram">
+        <div class="form-group">
+          <label for="cfg-bot-token">Telegram Bot Token</label>
+          <div class="input-with-toggle">
+            <input type="password" id="cfg-bot-token" class="input-text font-mono" placeholder="123456789:ABCdefGHIjklMNOpqrsTUVwxyz">
+            <button type="button" class="btn-toggle-vis" data-for="cfg-bot-token" title="Show/Hide">👁️</button>
+          </div>
+          <p class="field-help">Obtain from <a href="https://t.me/BotFather" target="_blank" rel="noopener">@BotFather</a> on Telegram via <code>/newbot</code>.</p>
+        </div>
+
+        <div class="form-group">
+          <div class="label-with-badge">
+            <label for="cfg-chat-ids">Recipients / User IDs</label>
+            <span class="badge-tag">Multiple IDs Allowed</span>
+          </div>
+          <textarea id="cfg-chat-ids" class="input-textarea font-mono" rows="2" placeholder="e.g. 987654321, 123456789"></textarea>
+          <p class="field-help">Enter one or multiple Telegram chat/user IDs separated by commas or newlines. Daily alerts & weekly digests will be delivered to every configured user. (Get your chat ID from <a href="https://t.me/userinfobot" target="_blank" rel="noopener">@userinfobot</a>).</p>
+        </div>
+
+        <div class="telegram-test-card">
+          <div class="test-header">
+            <div>
+              <div class="test-title">Test Telegram Connection</div>
+              <p class="text-muted">Sends a verification test message to all chat IDs configured above.</p>
+            </div>
+            <button type="button" id="btn-test-telegram" class="btn-test">🔔 Send Test Ping</button>
+          </div>
+          <div id="telegram-test-result" class="test-result" style="display: none;"></div>
+        </div>
+      </div>
+
+      <!-- Tab 2: AI Engine & API Keys -->
+      <div class="tab-pane" id="tab-llm">
+        <div class="form-row-2">
+          <div class="form-group">
+            <label for="cfg-llm-provider">Scoring Provider</label>
+            <select id="cfg-llm-provider" class="input-select">
+              <option value="xkiro">Xkiro (Mistral Large 3)</option>
+              <option value="openrouter">OpenRouter</option>
+              <option value="openai">OpenAI</option>
+              <option value="cursor">Cursor Local Agent</option>
+              <option value="ollama">Ollama (Local)</option>
+              <option value="none">Offline Heuristics (0 tokens)</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label for="cfg-llm-model">Model Identifier</label>
+            <input type="text" id="cfg-llm-model" class="input-text font-mono" placeholder="mistralai/mistral-large-2512">
+          </div>
+        </div>
+
+        <div class="form-row-2">
+          <div class="form-group">
+            <label for="cfg-min-score">Alert / Match Threshold (0-10)</label>
+            <input type="number" id="cfg-min-score" class="input-text font-mono" min="1" max="10" value="6">
+          </div>
+
+          <div class="form-group checkbox-group">
+            <label class="toggle-label">
+              <input type="checkbox" id="cfg-llm-triage">
+              <span>Free Triage (skip obvious non-matches locally)</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="section-divider"><span>API Keys (Persisted securely to .env)</span></div>
+
+        <div class="form-group">
+          <label for="key-xkiro">XKIRO_API_KEY</label>
+          <div class="input-with-toggle">
+            <input type="password" id="key-xkiro" class="input-text font-mono" placeholder="Enter Xkiro API Key">
+            <button type="button" class="btn-toggle-vis" data-for="key-xkiro">👁️</button>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="key-openai">OPENAI_API_KEY</label>
+          <div class="input-with-toggle">
+            <input type="password" id="key-openai" class="input-text font-mono" placeholder="sk-proj-...">
+            <button type="button" class="btn-toggle-vis" data-for="key-openai">👁️</button>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="key-openrouter">OPENROUTER_API_KEY</label>
+          <div class="input-with-toggle">
+            <input type="password" id="key-openrouter" class="input-text font-mono" placeholder="sk-or-v1-...">
+            <button type="button" class="btn-toggle-vis" data-for="key-openrouter">👁️</button>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="key-cursor">CURSOR_API_KEY</label>
+          <div class="input-with-toggle">
+            <input type="password" id="key-cursor" class="input-text font-mono" placeholder="Enter Cursor Key">
+            <button type="button" class="btn-toggle-vis" data-for="key-cursor">👁️</button>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="key-anthropic">ANTHROPIC_API_KEY</label>
+          <div class="input-with-toggle">
+            <input type="password" id="key-anthropic" class="input-text font-mono" placeholder="sk-ant-...">
+            <button type="button" class="btn-toggle-vis" data-for="key-anthropic">👁️</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tab 3: Candidate & Resume -->
+      <div class="tab-pane" id="tab-candidate">
+        <div class="form-group">
+          <label for="cfg-seniority">Target Seniority Band</label>
+          <select id="cfg-seniority" class="input-select">
+            <option value="intern">Intern / Student</option>
+            <option value="junior">Junior / Entry-Level (0-2 yrs)</option>
+            <option value="mid">Mid-Level (2-5 yrs)</option>
+            <option value="senior">Senior (5+ yrs)</option>
+            <option value="lead">Lead / Staff / Principal</option>
+            <option value="any">Any (Disable seniority capping)</option>
+          </select>
+          <p class="field-help">Caps scores of roles exceeding or not matching your career level.</p>
+        </div>
+
+        <div class="form-group">
+          <label for="cfg-locations">Target Locations (Comma-separated)</label>
+          <input type="text" id="cfg-locations" class="input-text" placeholder="Remote, San Francisco, New York, London, Bengaluru">
+          <p class="field-help">Roles mentioning these locations are prioritized in matching.</p>
+        </div>
+
+        <div class="section-divider"><span>Active Resume Configuration</span></div>
+        <div class="modal-resume-box">
+          <div class="resume-box-left">
+            <div class="resume-path-title">Active File: <strong id="modal-resume-name" class="font-mono text-accent">resume.example.txt</strong></div>
+            <p class="text-muted">You can upload a new PDF or TXT resume right here without manually touching files.</p>
+          </div>
+          <button type="button" id="btn-modal-upload-resume" class="btn-secondary">Upload New Resume</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-footer">
+      <span id="settings-status-msg" class="status-msg"></span>
+      <div class="modal-footer-btns">
+        <button type="button" id="btn-settings-cancel" class="btn-cancel">Cancel</button>
+        <button type="button" id="btn-settings-save" class="btn-save">Save Settings</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Global Toast Notification -->
+<div id="toast" class="toast" style="display: none;"></div>
 
 <script src="/static/app.js"></script>
 </body>

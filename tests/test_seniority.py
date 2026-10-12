@@ -20,7 +20,7 @@ def test_seniority_title_detection():
     # Junior marker wins
     assert not is_senior_title("Senior Engineering Intern")
     assert is_junior_title("Senior Engineering Intern")
-    print("✓ seniority title detection passes")
+    print("[OK] seniority title detection passes")
 
 
 def test_configurable_seniority_caps():
@@ -48,7 +48,7 @@ def test_configurable_seniority_caps():
     s, _ = apply_cap(9, "Software Engineer Intern", "test", target_seniority="any")
     assert s == 9
 
-    print("✓ configurable seniority caps pass")
+    print("[OK] configurable seniority caps pass")
 
 
 if __name__ == "__main__":
