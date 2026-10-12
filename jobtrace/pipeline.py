@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Callable
 
@@ -102,20 +102,27 @@ def run_pipeline(
     all_jobs: list[dict] = []
     healthy_companies: list[str] = []
 
-    # Fetch companies
-    for entry in companies:
-        if cancel_event and cancel_event.is_set():
-            return {"cancelled": True}
-        jobs, err = sources.fetch_company(entry)
-        if err:
-            errors.append(f"{entry['name']}: {err}")
-        else:
-            healthy_companies.append(entry["name"])
-            all_jobs.extend(jobs)
-        dispatch("fetch", company=entry["name"], count=len(jobs), error=err or "")
-        if not quiet:
-            flag = f"  ⚠ {err}" if err else ""
-            print(f"  {entry['name']:<24} {len(jobs):>4} open{flag}", flush=True)
+    # Fetch companies concurrently with real-time SSE progress streaming
+    workers = min(8, max(1, len(companies)))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        future_map = {pool.submit(sources.fetch_company, entry): entry for entry in companies}
+        for fut in as_completed(future_map):
+            if cancel_event and cancel_event.is_set():
+                return {"cancelled": True}
+            entry = future_map[fut]
+            try:
+                jobs, err = fut.result()
+            except Exception as e:
+                jobs, err = [], str(e)
+            if err:
+                errors.append(f"{entry['name']}: {err}")
+            else:
+                healthy_companies.append(entry["name"])
+                all_jobs.extend(jobs)
+            dispatch("fetch", company=entry["name"], count=len(jobs), error=err or "")
+            if not quiet:
+                flag = f"  ⚠ {err}" if err else ""
+                print(f"  {entry['name']:<24} {len(jobs):>4} open{flag}", flush=True)
 
     # Aggregators / discovery
     disc_cfg = cfg.get("discovery") or {}

@@ -19,6 +19,7 @@ resume*.pdf
 __pycache__/
 *.pyc
 *.db
+*.db-*
 *.log
 digest_preview.html
 alert_preview.html

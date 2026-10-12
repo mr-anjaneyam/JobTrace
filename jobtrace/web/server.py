@@ -367,7 +367,7 @@ def state():
     scored = [j for j in mosaic_jobs if j.get("score") is not None]
     threshold = int(c.get("llm", {}).get("min_score", 6))
 
-    avg_score = round(sum(j["score"] for j in scored) / len(scored) / 10, 2) if scored else 0.0
+    avg_score = round(sum(j["score"] for j in scored) / len(scored), 1) if scored else 0.0
 
     return {
         "jobs": mosaic_jobs,

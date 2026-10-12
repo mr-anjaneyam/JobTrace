@@ -52,8 +52,13 @@ CREATE TABLE IF NOT EXISTS spend (
 class Store:
     def __init__(self, path: str | Path = "jobtrace.db"):
         self.path = Path(path)
-        self.db = sqlite3.connect(str(self.path))
+        self.db = sqlite3.connect(str(self.path), timeout=30.0)
         self.db.row_factory = sqlite3.Row
+        try:
+            self.db.execute("PRAGMA journal_mode = WAL;")
+            self.db.execute("PRAGMA busy_timeout = 30000;")
+        except Exception:
+            pass
         self.db.executescript(SCHEMA)
         self._init_fts()
         self.db.commit()
