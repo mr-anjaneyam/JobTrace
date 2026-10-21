@@ -25,3 +25,9 @@ digest_preview.html
 alert_preview.html
 
 .DS_Store
+temp/
+
+# frontend & node
+node_modules/
+dist/
+.vite/
