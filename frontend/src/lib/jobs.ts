@@ -25,7 +25,7 @@ export type Job = {
 
 const BRAND_PALETTE: Array<Job['brand']> = ['ink', 'sage', 'clay', 'gold', 'lilac'];
 
-export const KNOWN_DOMAINS: Record<string, string> = {
+const KNOWN_DOMAINS: Record<string, string> = {
   anthropic: 'anthropic.com',
   stripe: 'stripe.com',
   notion: 'notion.so',
@@ -69,7 +69,7 @@ export const KNOWN_DOMAINS: Record<string, string> = {
   distran: 'distran.swiss',
 };
 
-export function getCompanyDomain(company: string, rawDomain?: string): string {
+function getCompanyDomain(company: string, rawDomain?: string): string {
   if (
     rawDomain &&
     rawDomain.trim() &&
@@ -88,7 +88,7 @@ export function getCompanyDomain(company: string, rawDomain?: string): string {
   return clean ? `${clean}.com` : '';
 }
 
-export function getCompanyLogo(company: string, domain?: string): string {
+function getCompanyLogo(company: string, domain?: string): string {
   const d = getCompanyDomain(company, domain);
   if (!d) return '';
   return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(d)}&sz=128`;

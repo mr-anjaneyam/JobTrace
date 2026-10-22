@@ -6,12 +6,10 @@ import {
   ChevronDown,
   ChevronUp,
   MapPin,
-  Sparkles,
   ArrowRight,
   Bookmark,
   Check,
   Columns2,
-  X,
 } from 'lucide-react';
 import { type Job } from '@/lib/jobs';
 import { CompanyMark, MatchMatrix } from './match-matrix';

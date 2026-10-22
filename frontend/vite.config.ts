@@ -14,18 +14,8 @@ export default defineConfig({
     },
   },
   build: {
-    rollupOptions: {
-      output: {
-        manualChunks(id) {
-          if (!id.includes('node_modules')) return undefined;
-          if (id.includes('recharts') || id.includes('d3-')) return 'charts';
-          if (id.includes('react-zoom-pan-pinch')) return 'map';
-          if (id.includes('@radix-ui') || id.includes('lucide-react')) return 'ui';
-          if (id.includes('react')) return 'react';
-          return 'vendor';
-        },
-      },
-    },
+    // Hand-made vendor chunks create circular imports with React; lazy imports already split the charts.
+    chunkSizeWarningLimit: 900,
   },
   server: {
     port: 3000,

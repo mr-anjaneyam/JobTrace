@@ -1,17 +1,15 @@
-import { useState, useRef, useEffect, type FormEvent } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { Presence } from '@/components/ui/presence';
+import { Logo } from './logo';
 import type { PresenceState } from '@/hooks/use-presence';
 import {
-  Search,
   X,
-  Compass,
   Settings,
   User,
   RefreshCw,
   Sparkles,
   Bookmark,
   ChevronDown,
-  Filter,
   Check,
   ShieldCheck,
 } from 'lucide-react';
@@ -73,7 +71,6 @@ export function MapOmnibox({
 }: MapOmniboxProps) {
   const [seniorityOpen, setSeniorityOpen] = useState(false);
   const [sourceOpen, setSourceOpen] = useState(false);
-  const [filterMenuOpen, setFilterMenuOpen] = useState(false);
   const [isPurging, setIsPurging] = useState(false);
   const [purgeResult, setPurgeResult] = useState<string | null>(null);
 
@@ -120,7 +117,6 @@ export function MapOmnibox({
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
         setSeniorityOpen(false);
         setSourceOpen(false);
-        setFilterMenuOpen(false);
       }
     };
     document.addEventListener('mousedown', handleOutsideClick);
@@ -133,7 +129,7 @@ export function MapOmnibox({
       <div className="gmap-omnibox-card">
         {/* Brand Compass / Icon */}
         <div className="omnibox-logo-btn" title="JobTrace Map Navigation">
-          <Compass size={20} className={isScanning ? 'animate-spin text-primary' : 'text-primary'} />
+          <Logo size={26} className={isScanning ? 'animate-spin' : ''} />
         </div>
 
         {/* Search Input */}

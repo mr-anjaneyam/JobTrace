@@ -12,9 +12,7 @@
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
-  --color-card-foreground: var(--foreground);
   --color-popover: var(--card);
-  --color-popover-foreground: var(--foreground);
   --color-primary: var(--primary);
   --color-primary-foreground: var(--primary-foreground);
   --color-secondary: var(--secondary);
@@ -33,11 +31,6 @@
   --color-gold: var(--gold);
   --color-lilac: var(--lilac);
   --color-ink: var(--ink);
-  --color-score-excellent: var(--score-excellent);
-  --color-score-strong: var(--score-strong);
-  --color-score-good: var(--score-good);
-  --color-score-fair: var(--score-fair);
-  --color-score-low: var(--score-low);
   --color-score-text: var(--score-text);
   --color-overlay: var(--overlay);
 }
@@ -64,13 +57,14 @@
   --score-fair: #ffedd5;
   --score-low: #fee2e2;
   --score-text: #065f46;
-  --shadow-tool: 0 4px 16px rgba(15, 23, 42, 0.08);
   --overlay: rgba(15, 23, 42, 0.45);
 }
 
 @layer base {
   * { border-color: var(--border); box-sizing: border-box; }
-  html, body, #root {
+  html,
+body,
+#root {
     margin: 0;
     padding: 0;
     width: 100vw;
@@ -82,8 +76,15 @@
     color: var(--foreground);
     -webkit-font-smoothing: antialiased;
   }
-  button, input, select, textarea { font: inherit; }
-  h1, h2, h3, h4, h5 { font-family: var(--font-display); margin: 0; }
+  button,
+input,
+select,
+textarea { font: inherit; }
+  h1,
+h2,
+h3,
+h4,
+h5 { font-family: var(--font-display); margin: 0; }
   ::selection { background: #a7f3d0; }
 }
 
@@ -175,30 +176,10 @@
   pointer-events: none;
 }
 
-.district-watermark {
-  padding: 18px 24px;
-  pointer-events: none;
-  opacity: 0.88;
-  z-index: 10;
-}
-
-.theme-satellite .district-watermark h3 {
-  color: rgba(255, 255, 255, 0.7) !important;
-}
-
-.theme-satellite .district-watermark p {
-  color: rgba(255, 255, 255, 0.4) !important;
-}
-
 .theme-satellite .gmap-axis-tag {
   background: rgba(15, 23, 42, 0.9) !important;
   color: #cbd5e1 !important;
   border-color: rgba(255, 255, 255, 0.12) !important;
-}
-
-.district-watermark {
-  pointer-events: none;
-  opacity: 0.85;
 }
 
 /* Infinite Coordinate Grid & Axes */
@@ -364,15 +345,9 @@
   overflow: visible;
 }
 
-
 .grid-subtle-line {
   stroke: rgba(148, 163, 184, 0.15);
   stroke-dasharray: 3 6;
-}
-
-.grid-boundary-line {
-  stroke: rgba(100, 116, 139, 0.35);
-  stroke-width: 1.5;
 }
 
 /* Axis Compass Tags */
@@ -919,22 +894,6 @@
 .dot-sweet { background: #10b981; }
 .dot-stretch { background: #f59e0b; }
 .dot-safety { background: #3b82f6; }
-
-.gmap-chip-dropdown {
-  position: absolute;
-  top: 36px;
-  left: 0;
-  background: #ffffff;
-  border-radius: 12px;
-  border: 1px solid rgba(0, 0, 0, 0.08);
-  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15);
-  padding: 4px;
-  min-width: 140px;
-  z-index: 45;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
 
 .gmap-floating-dropdown {
   position: absolute;
@@ -2438,8 +2397,8 @@ html.perf-lite .pin-selected .pin-body {
 
 @media (prefers-reduced-motion: reduce) {
   *:not(.animate-spin),
-  *::before,
-  *::after {
+*::before,
+*::after {
     animation-duration: 0.01ms !important;
     animation-delay: 0ms !important;
     transition-duration: 0.01ms !important;

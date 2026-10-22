@@ -78,6 +78,36 @@ export interface ApiSettings {
   api_keys: Record<string, string>;
 }
 
+export interface SettingsUpdate {
+  telegram?: { bot_token?: string; chat_ids?: string[] | string };
+  llm?: { provider?: string; model?: string; min_score?: number; triage?: boolean };
+  candidate?: { seniority?: string; locations?: string[] };
+  filters?: { title_include?: string[] };
+  api_keys?: Record<string, string>;
+}
+
+export interface OnboardingScan {
+  state: 'idle' | 'running' | 'done' | 'error';
+  percent: number;
+  message: string;
+  new: number;
+  scored: number;
+  errors: string[];
+  note: string;
+}
+
+export interface OnboardingStatus {
+  completed: boolean;
+  name: string;
+  scan: OnboardingScan;
+}
+
+export interface TelegramChat {
+  id: string;
+  name: string;
+  type: string;
+}
+
 export const api = {
   async getState(): Promise<ApiStateResponse> {
     const res = await fetch('/api/state');
@@ -90,6 +120,32 @@ export const api = {
     if (!res.ok) throw new Error(`HTTP ${res.status} searching jobs`);
     const data: { ids: string[] | null } = await res.json();
     return data.ids;
+  },
+
+  async getOnboardingStatus(): Promise<OnboardingStatus> {
+    const res = await fetch('/api/onboarding/status');
+    if (!res.ok) throw new Error(`HTTP ${res.status} fetching onboarding status`);
+    return res.json();
+  },
+
+  async completeOnboarding(name: string, startScan = true): Promise<{ ok: boolean; started: boolean; scan: OnboardingScan }> {
+    const res = await fetch('/api/onboarding/complete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, start_scan: startScan }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status} completing onboarding`);
+    return res.json();
+  },
+
+  async detectTelegramChat(botToken: string): Promise<{ ok: boolean; chats: TelegramChat[]; message: string }> {
+    const res = await fetch('/api/telegram/detect-chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ bot_token: botToken }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status} detecting chat`);
+    return res.json();
   },
 
   async getJobDetail(id: string): Promise<ApiJob> {
@@ -131,7 +187,7 @@ export const api = {
     return res.json();
   },
 
-  async updateSettings(settings: Partial<ApiSettings>): Promise<{ ok: boolean; message?: string }> {
+  async updateSettings(settings: SettingsUpdate): Promise<{ ok: boolean; message?: string }> {
     const res = await fetch('/api/settings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

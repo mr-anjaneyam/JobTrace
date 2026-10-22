@@ -1,9 +1,8 @@
-import { Columns2, Radio, Sparkles } from 'lucide-react';
+import { Columns2, Sparkles } from 'lucide-react';
 
 export interface MapStatusPillProps {
   totalCount: number;
   sweetCount: number;
-  shortlistCount: number;
   compareCount: number;
   onOpenCompare: () => void;
   isScanning: boolean;
@@ -13,7 +12,6 @@ export interface MapStatusPillProps {
 export function MapStatusPill({
   totalCount,
   sweetCount,
-  shortlistCount,
   compareCount,
   onOpenCompare,
   isScanning,

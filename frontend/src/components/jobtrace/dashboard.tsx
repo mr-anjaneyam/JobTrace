@@ -27,7 +27,6 @@ export function Dashboard({
 }) {
   const { state: ws, patch, newDays } = useWorkspace();
   const [rawJobs, setRawJobs] = useState<ApiJob[]>([]);
-  const [loading, setLoading] = useState(true);
   const [scanning, setScanning] = useState(false);
   const [scanStatus, setScanStatus] = useState<string | null>(null);
 
@@ -81,8 +80,6 @@ export function Dashboard({
       setScanning(res.scanning || false);
     } catch (e) {
       console.error('Failed to load state from JobTrace API:', e);
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -241,7 +238,7 @@ export function Dashboard({
     if (scanning) return;
     setScanning(true);
     setScanStatus('Starting live JobTrace scan...');
-    const cleanup = api.createScanEventSource(
+    api.createScanEventSource(
       (ev) => {
         if (ev.type === 'fetch') {
           throttledStatus(`Fetched ${ev.company || 'portal'} (${ev.count ?? 0} open)`);
@@ -368,7 +365,6 @@ export function Dashboard({
       <MapStatusPill
         totalCount={deferredFilteredJobs.length}
         sweetCount={sweetCount}
-        shortlistCount={ws.saved.length}
         compareCount={compare.length}
         onOpenCompare={() => setCompareOpen(true)}
         isScanning={scanning}

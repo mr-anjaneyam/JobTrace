@@ -3,7 +3,7 @@ import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { api, type ApiProfile } from '@/lib/api';
-import { User, Upload, Check, AlertCircle, FileText, Sparkles, MapPin, Briefcase, GraduationCap } from 'lucide-react';
+import { User, Upload, Check, AlertCircle, Sparkles } from 'lucide-react';
 
 export function UserProfileDialog({
   open,

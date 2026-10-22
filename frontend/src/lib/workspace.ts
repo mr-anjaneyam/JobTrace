@@ -12,7 +12,7 @@ export type WorkspaceState = {
   lastVisit: number;
 };
 
-export const WORKSPACE_KEY = 'jobtrace.workspace.v2';
+const WORKSPACE_KEY = 'jobtrace.workspace.v2';
 
 export function defaultWorkspace(now = Date.now()): WorkspaceState {
   return {

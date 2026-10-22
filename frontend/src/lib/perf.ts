@@ -1,5 +1,5 @@
 // Low-end detection; override with localStorage "jobtrace.perf" = "lite" | "full".
-export function isLowEndDevice(): boolean {
+function isLowEndDevice(): boolean {
   try {
     const override = localStorage.getItem('jobtrace.perf');
     if (override === 'lite') return true;
@@ -14,7 +14,7 @@ export function isLowEndDevice(): boolean {
   return lowCores || lowMemory || reducedMotion;
 }
 
-export const LITE_MODE = isLowEndDevice();
+const LITE_MODE = isLowEndDevice();
 
 export const MAX_MAP_PINS = LITE_MODE ? 80 : 150;
 

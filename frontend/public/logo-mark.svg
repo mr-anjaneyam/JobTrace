@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="170 82 500 500" fill="none" role="img" aria-label="JobTrace">
+  <mask id="gap-mark" maskUnits="userSpaceOnUse" x="0" y="0" width="838" height="768">
+    <rect width="838" height="768" fill="#fff"/>
+    <circle cx="573" cy="157" r="66" fill="#000"/>
+    <circle cx="232" cy="445" r="62" fill="#000"/>
+  </mask>
+  <circle cx="420" cy="324" r="223" fill="none" stroke="#08294A" stroke-width="22" mask="url(#gap-mark)"/>
+  <circle cx="573" cy="157" r="49" fill="#0A6BFF"/>
+  <circle cx="232" cy="445" r="26" fill="none" stroke="#6B8094" stroke-width="26"/>
+  <polygon points="514,228 318,318 399,340 419,424" fill="#00A88E" stroke="#00A88E" stroke-width="15" stroke-linejoin="round"/>
+</svg>
