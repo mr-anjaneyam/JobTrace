@@ -14,6 +14,8 @@
 [![Docker ready](https://img.shields.io/badge/docker-compose%20up-00A88E.svg)](#-quick-start)
 [![GitHub stars](https://img.shields.io/github/stars/mr-anjaneyam/JobTrace?style=flat&color=00A88E)](https://github.com/mr-anjaneyam/JobTrace/stargazers)
 
+<a href="https://42loop.com/posts/CpbRMv2NEwiaxE3nXnfb"><img src="https://42loop.com/badge/featured.svg" alt="Featured on 42Loop" width="180" height="36"></a>
+
 [Quick start](#-quick-start) &nbsp;•&nbsp; [Features](#-what-it-does) &nbsp;•&nbsp; [How it works](#-how-it-works) &nbsp;•&nbsp; [Configure](#-configuration) &nbsp;•&nbsp; [FAQ](#-faq) &nbsp;•&nbsp; [Contribute](#-contributing)
 
 </div>
