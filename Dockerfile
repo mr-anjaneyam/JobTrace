@@ -1,4 +1,5 @@
-FROM node:20-alpine AS web
+# The UI bundle is platform-independent, so it is built once natively even for multi-arch images
+FROM --platform=$BUILDPLATFORM node:20-alpine AS web
 WORKDIR /web
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci --no-audit --no-fund
@@ -6,6 +7,7 @@ COPY frontend/ ./
 RUN npm run build
 
 FROM python:3.12-slim
+
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     JOBTRACE_HOME=/data \
@@ -23,6 +25,18 @@ RUN pip install --no-cache-dir -r backend/requirements.txt
 COPY backend/ backend/
 COPY config.example.yaml .env.example ./
 COPY --from=web /web/dist frontend/dist
+
+# Version stamps go last so a new release does not invalidate the dependency layers
+ARG JOBTRACE_VERSION=dev
+ARG JOBTRACE_COMMIT=
+LABEL org.opencontainers.image.title="JobTrace" \
+      org.opencontainers.image.description="Self-hosted job tracker with Telegram alerts" \
+      org.opencontainers.image.source="https://github.com/mr-anjaneyam/JobTrace" \
+      org.opencontainers.image.licenses="MIT" \
+      org.opencontainers.image.version="$JOBTRACE_VERSION" \
+      org.opencontainers.image.revision="$JOBTRACE_COMMIT"
+ENV JOBTRACE_VERSION=$JOBTRACE_VERSION \
+    JOBTRACE_COMMIT=$JOBTRACE_COMMIT
 
 RUN useradd --create-home --uid 1000 jobtrace \
     && mkdir /data \

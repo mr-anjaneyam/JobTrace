@@ -17,7 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from .. import sources, telegram
+from .. import __commit__, __version__, sources, telegram
 from ..main import ROOT, load_config, load_dotenv
 from ..pipeline import ScanBusy, run_pipeline
 from ..resume import build_details, extract_text, parse_details
@@ -27,7 +27,7 @@ load_dotenv()
 
 FRONTEND_DIR = Path(__file__).resolve().parents[3] / "frontend"
 FRONTEND_DIST = FRONTEND_DIR / "dist"
-app = FastAPI(title="JobTrace API", version="2.0.0")
+app = FastAPI(title="JobTrace API", version=__version__)
 
 app.add_middleware(
     CORSMiddleware,
@@ -588,6 +588,12 @@ def _start_background_scan() -> bool:
         _bg_scan.update(state="running", percent=2, message="Warming up", new=0, scored=0, errors=[], note="")
     threading.Thread(target=_bg_worker, daemon=True).start()
     return True
+
+
+@app.get("/api/version")
+def version_info():
+    """What is running: a release tag in Docker images, \"dev\" when run from source."""
+    return {"version": __version__, "commit": __commit__}
 
 
 @app.get("/api/onboarding/status")

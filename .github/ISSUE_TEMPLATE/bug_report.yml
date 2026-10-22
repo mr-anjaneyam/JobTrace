@@ -42,6 +42,7 @@ body:
     id: version
     attributes:
       label: Version or commit
+      description: Open /api/version in your install, or give the commit if you run from source.
       placeholder: "main @ a1b2c3d"
   - type: dropdown
     id: os

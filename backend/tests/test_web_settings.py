@@ -278,3 +278,10 @@ def test_store_connection_is_reused_per_thread(workspace):
     from jobtrace.web import server
 
     assert server.get_store() is server.get_store()
+
+
+def test_version_endpoint(client):
+    data = client.get("/api/version").json()
+    assert data["version"]
+    assert "commit" in data
+

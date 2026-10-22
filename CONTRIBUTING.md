@@ -50,6 +50,19 @@ Use short imperative subjects, optionally with a prefix such as `feat:`, `fix:`,
 
 OpenAI-compatible endpoints only need an entry in `ENDPOINTS` in `backend/jobtrace/llm.py`. Anything else should expose a scorer with `score_batch(profile, jobs)` returning `{job_id: (score, reason, breakdown)}` and be wired up in `make_scorer`.
 
+## Releasing (maintainers)
+
+Releases are fully automated. Merge to `main`, make sure CI is green, then tag:
+
+```bash
+git tag v1.2.0
+git push origin v1.2.0
+```
+
+The `Release` workflow then runs the tests, builds a multi-arch (`amd64` and `arm64`) image, pushes it to `ghcr.io/mr-anjaneyam/jobtrace` as `1.2.0`, `1.2`, `1` and `latest`, and creates a GitHub release with generated notes plus `docker-compose.yml` (pinned to that version), `env.example` (the `.env.example` file; GitHub renames uploaded dotfiles) and `config.example.yaml`. Tags with a suffix such as `v1.3.0-rc.1` become pre-releases and do not move `latest`.
+
+First release only: GitHub creates the package as private. Open the package page (Packages in the repository sidebar, then Package settings) and set the visibility to **Public** once, so anyone can pull without logging in. Label pull requests with `enhancement`, `bug` or `documentation` so the generated notes group nicely.
+
 ## Reporting security problems
 
 Do not open a public issue. See [SECURITY.md](SECURITY.md).
