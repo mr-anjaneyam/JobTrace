@@ -19,7 +19,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .. import sources, telegram
 from ..main import ROOT, load_config, load_dotenv
-from ..pipeline import run_pipeline
+from ..pipeline import ScanBusy, run_pipeline
 from ..resume import build_details, extract_text, parse_details
 from ..store import Store
 
@@ -548,7 +548,18 @@ def _bg_worker() -> None:
                 _bg_scan["message"] = str(data.get("message", "Scoring paused"))[:160]
 
     try:
-        result = run_pipeline(cfg, store, ROOT, quiet=True, emit=emit)
+        result = None
+        # The scheduler may be mid-scan on the same data folder, so wait for it instead of failing
+        for _ in range(120):
+            try:
+                result = run_pipeline(cfg, store, ROOT, quiet=True, emit=emit)
+                break
+            except ScanBusy:
+                with _bg_lock:
+                    _bg_scan["message"] = "Waiting for another scan to finish"
+                time.sleep(5)
+        if result is None:
+            raise ScanBusy("Another scan kept running for too long.")
         with _bg_lock:
             _bg_scan.update(
                 state="done",

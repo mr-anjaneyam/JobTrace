@@ -26,7 +26,7 @@ import json
 import yaml
 
 from . import telegram
-from .pipeline import run_pipeline
+from .pipeline import ScanBusy, run_pipeline
 from .relevance import apply_cap as apply_relevance_cap, apply_location_cap
 from .seniority import apply_cap as apply_seniority_cap
 from .store import Store
@@ -333,14 +333,20 @@ def cmd_daemon(cfg_path: Path, store: Store) -> None:
         cfg = fresh_cfg()
         if cfg is None:
             return False
-        cmd_alert(cfg, store)
+        try:
+            cmd_alert(cfg, store)
+        except ScanBusy:
+            return False  # try again on the next tick
         return True
 
     def weekly() -> bool:
         cfg = fresh_cfg()
         if cfg is None:
             return False
-        cmd_scan(cfg, store, quiet=True)
+        try:
+            cmd_scan(cfg, store, quiet=True)
+        except ScanBusy:
+            return False
         cmd_digest(cfg, store)
         return True
 
@@ -391,7 +397,10 @@ def main(argv=None) -> None:
     store = Store(ROOT / "jobtrace.db")
 
     if args.cmd == "scan":
-        cmd_scan(cfg, store)
+        try:
+            cmd_scan(cfg, store)
+        except ScanBusy as e:
+            sys.exit(str(e))
     elif args.cmd == "alert":
         cmd_alert(cfg, store, dry_run=args.dry_run)
     elif args.cmd == "digest":

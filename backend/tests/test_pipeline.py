@@ -102,3 +102,36 @@ def test_unified_pipeline():
 if __name__ == "__main__":
     test_unified_pipeline()
     print("All pipeline tests PASSED!")
+
+
+def test_scan_lock_blocks_a_second_scan_and_releases(tmp_path):
+    import pytest
+
+    with pipeline.scan_lock(tmp_path):
+        with pytest.raises(pipeline.ScanBusy):
+            with pipeline.scan_lock(tmp_path):
+                pass
+    with pipeline.scan_lock(tmp_path):
+        pass  # released after the first scan
+    assert not (tmp_path / pipeline.SCAN_LOCK_NAME).exists()
+
+
+def test_stale_scan_lock_is_taken_over(tmp_path):
+    import os
+    import time
+
+    lock = tmp_path / pipeline.SCAN_LOCK_NAME
+    lock.write_text("9999")
+    old = time.time() - pipeline.SCAN_LOCK_STALE_SECONDS - 60
+    os.utime(lock, (old, old))
+    with pipeline.scan_lock(tmp_path):
+        pass
+
+
+def test_run_pipeline_reports_busy_instead_of_scanning(tmp_path):
+    import pytest
+
+    store = Store(tmp_path / "t.db")
+    with pipeline.scan_lock(tmp_path):
+        with pytest.raises(pipeline.ScanBusy):
+            pipeline.run_pipeline({"companies": []}, store, tmp_path, quiet=True)

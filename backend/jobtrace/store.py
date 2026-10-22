@@ -106,14 +106,16 @@ class Store:
         fresh = []
 
         from jobtrace.sanitize import clean_html_text
-        for j in jobs:
+        for n, j in enumerate(jobs, 1):
             jid = j["id"]
             matches_filter = 1 if j.get("matches_filter", True) else 0
-            desc = clean_html_text(j.get("description") or "")[:8000]
+            raw_desc = j.get("description") or ""
 
             row = self.db.execute("SELECT id, closed_at, length(description) FROM jobs WHERE id = ?", (jid,)).fetchone()
             if row:
                 old_desc_len = row[2] or 0
+                # Cleaning is the costly step, so skip it for rows that already have a description
+                desc = clean_html_text(raw_desc)[:8000] if old_desc_len < 50 and raw_desc else ""
                 if old_desc_len < 50 and len(desc) >= 50:
                     self.db.execute(
                         """UPDATE jobs SET
@@ -141,6 +143,7 @@ class Store:
                         (now, matches_filter, j.get("url"), j.get("location"), j.get("posted_at"), jid),
                     )
             else:
+                desc = clean_html_text(raw_desc)[:8000]
                 self.db.execute(
                     """INSERT INTO jobs (
                            id, company, title, url, location, source,
@@ -155,6 +158,9 @@ class Store:
                 self.sync_fts(jid, j["title"], j["company"], j.get("location", ""), desc)
                 if matches_filter:
                     fresh.append(j)
+
+            if n % 250 == 0:
+                self.db.commit()  # short write locks let other processes in between batches
 
         self.db.commit()
         return fresh

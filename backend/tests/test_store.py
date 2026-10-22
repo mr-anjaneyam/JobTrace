@@ -144,3 +144,17 @@ def test_prune_vacuum_runs_without_error():
     s.db.execute("UPDATE jobs SET closed_at = ?", (time.time() - 400 * 86400,))
     s.db.commit()
     assert s.prune(30, vacuum=True) == 1
+
+
+def test_upsert_commits_in_chunks_and_keeps_existing_descriptions():
+    tmp = os.path.join(tempfile.mkdtemp(), "test_chunks.db")
+    s = Store(tmp)
+    long_desc = "Build reliable backend systems and APIs. " * 5
+    s.upsert([make_job(f"j{i}", desc=long_desc) for i in range(600)])
+    before = s.db.execute("SELECT description FROM jobs WHERE id = 'j1'").fetchone()[0]
+    assert len(before) >= 50
+
+    # A rescan with a different description must not rewrite rows that already have one
+    s.upsert([make_job(f"j{i}", desc="replacement text that is also long enough to count " * 3) for i in range(600)])
+    assert s.db.execute("SELECT description FROM jobs WHERE id = 'j1'").fetchone()[0] == before
+    assert s.stats()["total"] == 600

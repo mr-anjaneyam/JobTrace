@@ -35,3 +35,4 @@ SHOWCASE.md
 node_modules/
 dist/
 .vite/
+.scan.lock

@@ -6,9 +6,11 @@ pipeline with full budget enforcement, heuristic gates, and presence diffing.
 from __future__ import annotations
 
 import json
+import os
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable
 
@@ -23,6 +25,49 @@ from .seniority import apply_cap as apply_seniority_cap
 from .store import Store
 
 PROFILE_CACHE_NAME = ".resume_profile.json"
+SCAN_LOCK_NAME = ".scan.lock"
+SCAN_LOCK_STALE_SECONDS = 1800
+
+
+class ScanBusy(Exception):
+    """Another process or thread is already scanning this data folder."""
+
+
+@contextmanager
+def scan_lock(root_dir: Path):
+    """File lock shared by the web app and the scheduler, even across containers. Yields a heartbeat callable."""
+    path = root_dir / SCAN_LOCK_NAME
+    fd = None
+    for _ in range(2):
+        try:
+            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            break
+        except FileExistsError:
+            try:
+                if time.time() - path.stat().st_mtime > SCAN_LOCK_STALE_SECONDS:
+                    path.unlink()  # crashed scan left it behind
+                    continue
+            except FileNotFoundError:
+                continue
+            raise ScanBusy("Another scan is already running.") from None
+    if fd is None:
+        raise ScanBusy("Another scan is already running.")
+    os.write(fd, str(os.getpid()).encode())
+    os.close(fd)
+
+    def heartbeat() -> None:
+        try:
+            os.utime(path)
+        except OSError:
+            pass
+
+    try:
+        yield heartbeat
+    finally:
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
 
 
 def passes_filters(job: dict, filters_cfg: dict) -> bool:
@@ -76,6 +121,25 @@ def get_cached_profile(cfg: dict, scorer: Any, root_dir: Path, force: bool = Fal
 
 
 def run_pipeline(
+    cfg: dict,
+    store: Store,
+    root_dir: Path,
+    quiet: bool = False,
+    emit: Callable[[str, dict], None] | None = None,
+    cancel_event: threading.Event | None = None,
+    max_to_score: int | None = None,
+) -> dict:
+    """Run one scan at a time per data folder; raises ScanBusy if another is in progress."""
+    with scan_lock(root_dir) as heartbeat:
+        def beat(kind: str, data: dict) -> None:
+            heartbeat()
+            if emit:
+                emit(kind, data)
+
+        return _run_pipeline(cfg, store, root_dir, quiet, beat, cancel_event, max_to_score)
+
+
+def _run_pipeline(
     cfg: dict,
     store: Store,
     root_dir: Path,
