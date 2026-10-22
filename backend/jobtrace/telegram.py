@@ -168,7 +168,7 @@ def format_job_card(job: Any) -> str:
 def render_alert(rows: list[Any], label: str) -> str:
     """Render high-priority daily opening alerts."""
     lines = [
-        "🚨 <b>JOBTRACE — New Openings Detected</b>",
+        "🚨 <b>JOBTRACE: New Openings Detected</b>",
         f"📅 <i>{html.escape(label)}</i> · <b>{len(rows)}</b> matching role(s)\n",
     ]
     for r in rows:
@@ -190,7 +190,7 @@ def render_digest(
     discovered = [r for r in new_jobs if r.get("source") in ("remotive", "arbeitnow")]
 
     lines = [
-        "📡 <b>JOBTRACE — Weekly Digest</b>",
+        "📡 <b>JOBTRACE: Weekly Digest</b>",
         f"🗓️ <i>{html.escape(period_label)}</i>",
         f"📊 <b>{len(new_jobs)}</b> new matches · <b>{len(closed_jobs)}</b> closed roles\n",
     ]
@@ -215,7 +215,7 @@ def render_digest(
         for c in closed_jobs[:15]:
             c_title = html.escape(str(c["title"]))
             c_co = html.escape(str(c["company"]))
-            lines.append(f"• <s>{c_title}</s> — {c_co}")
+            lines.append(f"• <s>{c_title}</s> - {c_co}")
         if len(closed_jobs) > 15:
             lines.append(f"<i>...and {len(closed_jobs) - 15} more closed.</i>")
         lines.append("")
@@ -300,7 +300,7 @@ def test_telegram(
     for cid in targets:
         try:
             text = (
-                f"✅ <b>JobTrace — Telegram Bot Connected!</b>\n"
+                f"✅ <b>JobTrace: Telegram Bot Connected!</b>\n"
                 f"🤖 Bot: @{bot_user}\n"
                 f"💬 Chat ID: <code>{cid}</code>\n"
                 f"⏰ Timestamp: {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n"

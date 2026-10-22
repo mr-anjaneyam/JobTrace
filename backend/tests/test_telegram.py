@@ -30,7 +30,7 @@ def test_telegram_formatting():
 
     # Alert rendering
     alert_html = telegram.render_alert(jobs, "12 Oct 2026, 09:30")
-    assert "JOBTRACE — New Openings Detected" in alert_html
+    assert "JOBTRACE: New Openings Detected" in alert_html
     # Must properly escape HTML tags in title & company
     assert "&lt;Full-Stack&gt;" in alert_html
     assert "Acme &amp; Co" in alert_html
@@ -39,7 +39,7 @@ def test_telegram_formatting():
 
     # Digest rendering
     digest_html = telegram.render_digest(jobs, [{"title": "Old Role", "company": "Stripe"}], "Week of 12 Oct")
-    assert "JOBTRACE — Weekly Digest" in digest_html
+    assert "JOBTRACE: Weekly Digest" in digest_html
     assert "<s>Old Role</s>" in digest_html
     print("[OK] telegram formatting tests pass")
 

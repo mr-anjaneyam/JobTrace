@@ -35,7 +35,23 @@ def extract_text(path: str | Path) -> str:
             return "\n".join(page.extract_text() or "" for page in reader.pages)
         except ImportError as e:
             raise RuntimeError("Install pymupdf or pypdf to read PDF resumes (`pip install pymupdf`)") from e
+    if p.suffix.lower() == ".docx":
+        return _docx_text(p)
     return p.read_text(encoding="utf-8", errors="replace")
+
+
+def _docx_text(p: Path) -> str:
+    import html
+    import zipfile
+
+    try:
+        with zipfile.ZipFile(p) as z:
+            xml = z.read("word/document.xml").decode("utf-8", errors="replace")
+    except (zipfile.BadZipFile, KeyError) as e:
+        raise RuntimeError(f"Not a valid .docx file: {p.name}") from e
+    xml = re.sub(r"</w:p>", "\n", xml)
+    xml = re.sub(r"<w:(tab|br)\s*/>", " ", xml)
+    return html.unescape(re.sub(r"<[^>]+>", "", xml)).strip()
 
 
 PROFILE_PROMPT = """Summarize this resume into a concise candidate profile of at most 180 words.
@@ -124,7 +140,7 @@ _MONTH_NAMES = {
 }
 _MONTHS = r"Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec"
 _RANGE = re.compile(
-    rf"((?:{_MONTHS})[a-z]*\.?\s*\d{{4}}|\d{{4}})\s*[-–—to\u2013\u2014\ufffd\?~]+\s*"
+    rf"((?:{_MONTHS})[a-z]*\.?\s*\d{{4}}|\d{{4}})\s*[-to\u2013\u2014\ufffd\?~]+\s*"
     rf"((?:{_MONTHS})[a-z]*\.?\s*\d{{4}}|\d{{4}}|Present|Current|Now)",
     re.I,
 )
@@ -235,7 +251,7 @@ def _is_bullet_or_text(s: str) -> bool:
     s = s.strip()
     if not s:
         return True
-    if any(s.startswith(ch) for ch in ("-", "•", "*", "–", "—", "\ufffd", "\u2022", "·", "\x87", "\x8c")):
+    if any(s.startswith(ch) for ch in ("-", "•", "*", "\u2013", "\u2014", "\ufffd", "\u2022", "·", "\x87", "\x8c")):
         return True
     if s.endswith((".", ";")):
         return True
@@ -256,7 +272,7 @@ def _is_bullet_or_text(s: str) -> bool:
 
 
 def _clean_org(s: str, cand_name: str = "") -> str:
-    s = s.strip(" ,|·-–—\ufffd\x87\x8c?\"'()")
+    s = s.strip(" ,|·-\u2013\u2014\ufffd\x87\x8c?\"'()")
     if not s or len(s) > 60:
         return ""
     if cand_name and s.lower() == cand_name.lower():
@@ -381,9 +397,9 @@ def parse_details(text: str) -> dict:
         years = f"{m.group(1)} - {m.group(2)}"
 
         # Role and Org parsing
-        role_part = _unrun(ln[: m.start()]).strip(" ,|·-–—\ufffd?")
+        role_part = _unrun(ln[: m.start()]).strip(" ,|·-\u2013\u2014\ufffd?")
         if not role_part and i > 0:
-            prev_line = lines[i - 1].strip(" ,|·-–—\ufffd?")
+            prev_line = lines[i - 1].strip(" ,|·-\u2013\u2014\ufffd?")
             if not _SECTION.match(prev_line) and not _is_bullet_or_text(prev_line):
                 role_part = prev_line
 
@@ -454,8 +470,8 @@ def parse_details(text: str) -> dict:
             h_line = lines[h_idx]
             if _RANGE.search(h_line) or _SECTION.match(h_line):
                 break
-            if h_line.startswith(("-", "•", "*", "–", "—", "\ufffd", "\u2022")):
-                highlights.append(h_line.lstrip("-•*–—\ufffd\u2022 ").strip())
+            if h_line.startswith(("-", "•", "*", "\u2013", "\u2014", "\ufffd", "\u2022")):
+                highlights.append(h_line.lstrip("-•*\u2013\u2014\ufffd\u2022 ").strip())
             elif len(highlights) == 0 and len(h_line) > 30 and not h_line.startswith("http"):
                 highlights.append(h_line)
 

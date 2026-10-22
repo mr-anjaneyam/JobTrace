@@ -30,11 +30,34 @@ app = FastAPI(title="JobTrace API", version="2.0.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type"],
 )
+
+API_KEY_NAMES = (
+    "XKIRO_API_KEY",
+    "OPENAI_API_KEY",
+    "OPENROUTER_API_KEY",
+    "CURSOR_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "TYPESAFE_API_KEY",
+)
+MASK_CHAR = "\u2022"
+MAX_RESUME_BYTES = 5 * 1024 * 1024
+RESUME_EXTENSIONS = (".pdf", ".txt", ".md", ".docx")
+
+
+def mask_secret(value: str) -> str:
+    """Hide a secret, keeping only its last 4 characters for recognition."""
+    if not value:
+        return ""
+    tail = value[-4:] if len(value) > 8 else ""
+    return MASK_CHAR * 8 + tail
+
+
+def is_masked(value: str) -> bool:
+    return MASK_CHAR in value
 
 if (FRONTEND_DIST / "assets").exists():
     app.mount("/assets", StaticFiles(directory=str(FRONTEND_DIST / "assets")), name="assets")
@@ -96,7 +119,7 @@ def update_env_file(updates: dict[str, str]) -> None:
         if stripped and not stripped.startswith("#") and "=" in stripped:
             k, _ = stripped.split("=", 1)
             k = k.strip()
-            if k in updates:
+            if k in updates:  # values are pre-validated by _env_value_ok
                 new_val = updates[k]
                 new_lines.append(f'{k}="{new_val}"')
                 updated_keys.add(k)
@@ -110,6 +133,10 @@ def update_env_file(updates: dict[str, str]) -> None:
             os.environ[k] = v
 
     env_file.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+
+
+def _env_value_ok(value: str) -> bool:
+    return not any(ch in value for ch in '\r\n"\\')
 
 
 def get_store() -> Store:
@@ -156,7 +183,7 @@ def get_settings():
 
     return {
         "telegram": {
-            "bot_token": bot_token,
+            "bot_token": mask_secret(bot_token),
             "chat_ids": chat_ids,
             "chat_ids_raw": ", ".join(chat_ids),
         },
@@ -171,14 +198,7 @@ def get_settings():
             "locations": cand_cfg.get("locations", []),
         },
         "resume_path": c.get("resume_path", "resume.pdf"),
-        "api_keys": {
-            "XKIRO_API_KEY": os.environ.get("XKIRO_API_KEY", ""),
-            "OPENAI_API_KEY": os.environ.get("OPENAI_API_KEY", ""),
-            "OPENROUTER_API_KEY": os.environ.get("OPENROUTER_API_KEY", ""),
-            "CURSOR_API_KEY": os.environ.get("CURSOR_API_KEY", ""),
-            "ANTHROPIC_API_KEY": os.environ.get("ANTHROPIC_API_KEY", ""),
-            "TYPESAFE_API_KEY": os.environ.get("TYPESAFE_API_KEY", ""),
-        },
+        "api_keys": {name: mask_secret(os.environ.get(name, "")) for name in API_KEY_NAMES},
     }
 
 
@@ -192,6 +212,8 @@ async def update_settings(request: Request):
     if "telegram" in data:
         t = data["telegram"]
         bot_token = str(t.get("bot_token", "")).strip()
+        if is_masked(bot_token):
+            bot_token = telegram.get_bot_token(c)
         raw_chat_ids = t.get("chat_ids")
 
         parsed_ids: list[str] = []
@@ -252,7 +274,12 @@ async def update_settings(request: Request):
             for k, v in keys.items():
                 k_clean = str(k).strip().upper()
                 v_clean = str(v).strip()
-                env_updates[k_clean] = v_clean
+                if k_clean in API_KEY_NAMES and not is_masked(v_clean):
+                    env_updates[k_clean] = v_clean
+
+    bad = [k for k, v in env_updates.items() if not _env_value_ok(v)]
+    if bad:
+        return {"ok": False, "message": f"Invalid characters in: {', '.join(bad)}"}
 
     if env_updates:
         update_env_file(env_updates)
@@ -270,6 +297,8 @@ async def test_telegram_endpoint(request: Request):
         pass
     c = get_cfg()
     token = data.get("bot_token")
+    if isinstance(token, str) and is_masked(token):
+        token = None
     chat_ids = data.get("chat_ids")
     ok, msg = telegram.test_telegram(c, bot_token=token, chat_ids=chat_ids)
     return {"ok": ok, "message": msg}
@@ -281,14 +310,23 @@ async def upload_resume(file: UploadFile = File(...)):
         return {"ok": False, "error": "No file selected."}
 
     ext = Path(file.filename).suffix.lower()
-    if ext not in (".pdf", ".txt", ".md", ".docx", ".rtf"):
-        return {"ok": False, "error": f"Unsupported file type '{ext}'. Please upload PDF, TXT, or MD."}
+    if ext not in RESUME_EXTENSIONS:
+        return {"ok": False, "error": f"Unsupported file type '{ext}'. Please upload PDF, DOCX, TXT, or MD."}
 
-    # Clean filename and save in workspace root
-    safe_filename = Path(file.filename).name
+    content = await file.read(MAX_RESUME_BYTES + 1)
+    if len(content) > MAX_RESUME_BYTES:
+        return {"ok": False, "error": "Resume is larger than 5 MB."}
+
+    # Fixed name so an upload can never overwrite another project file
+    safe_filename = f"resume{ext}"
     dest_path = ROOT / safe_filename
-
-    content = await file.read()
+    for other_ext in RESUME_EXTENSIONS:
+        old = ROOT / f"resume{other_ext}"
+        if old != dest_path and old.exists():
+            try:
+                old.unlink()
+            except OSError:
+                pass
     dest_path.write_bytes(content)
 
     # Update config.yaml with the new resume path

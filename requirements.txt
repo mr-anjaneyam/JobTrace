@@ -1,8 +1,1 @@
-requests>=2.31.0
-PyYAML>=6.0
-pypdf>=4.2.0
-pymupdf>=1.24.0
-fastapi>=0.110.0
-python-multipart>=0.0.9
-uvicorn[standard]>=0.29.0
-httpx>=0.27.0
+-r backend/requirements.txt

@@ -58,6 +58,7 @@ def _norm(
     source: str = "",
     domain: str = "",
 ) -> dict:
+    from jobtrace.sanitize import clean_html_text
     url = normalize_url(raw_url)
     clean_title = (title or "").strip()
     return {
@@ -67,7 +68,7 @@ def _norm(
         "url": url,
         "location": (location or "").strip(),
         "posted_at": posted_at,
-        "description": (description or "")[:6000],
+        "description": clean_html_text(description)[:6000],
         "source": source,
         "domain": domain,
         "matches_filter": True,

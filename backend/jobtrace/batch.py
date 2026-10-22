@@ -161,7 +161,8 @@ def parse(text: str, jobs: list[dict]) -> dict[str, tuple[int, str, dict]]:
         if items and not isinstance(items[0], (list, dict)):
             items = [items]
     except (json.JSONDecodeError, ValueError):
-        items = _salvage(blob)
+        # A reply cut off by max_tokens leaves the outer array unclosed, so retry without it
+        items = _salvage(blob) or _salvage(blob[1:])
         if not items:
             raise ValueError(f"Unparseable reply: {text[:160]}")
 

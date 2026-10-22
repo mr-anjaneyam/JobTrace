@@ -102,10 +102,11 @@ class Store:
         self.last_upsert_ts = now
         fresh = []
 
+        from jobtrace.sanitize import clean_html_text
         for j in jobs:
             jid = j["id"]
             matches_filter = 1 if j.get("matches_filter", True) else 0
-            desc = (j.get("description") or "")[:8000]
+            desc = clean_html_text(j.get("description") or "")[:8000]
 
             row = self.db.execute("SELECT id, closed_at, length(description) FROM jobs WHERE id = ?", (jid,)).fetchone()
             if row:
@@ -157,7 +158,8 @@ class Store:
 
     def update_description(self, job_id: str, description: str) -> None:
         """Update job description and sync with full-text search index."""
-        desc = (description or "")[:8000]
+        from jobtrace.sanitize import clean_html_text
+        desc = clean_html_text(description or "")[:8000]
         self.db.execute("UPDATE jobs SET description = ? WHERE id = ?", (desc, job_id))
         row = self.db.execute("SELECT title, company, location FROM jobs WHERE id = ?", (job_id,)).fetchone()
         if row:

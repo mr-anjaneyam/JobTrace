@@ -47,7 +47,7 @@ def load_dotenv(env_path: Path | None = None) -> None:
             k, v = line.split("=", 1)
             k, v = k.strip(), v.strip().strip("'\"")
             if k:
-                os.environ[k] = v
+                os.environ.setdefault(k, v)
     except Exception:
         pass
 
@@ -255,15 +255,22 @@ def cmd_test(cfg: dict) -> None:
 
 def cmd_web(port: int = 8000) -> None:
     import uvicorn
-    print(f"Starting JobTrace Backend API at http://127.0.0.1:{port}")
-    uvicorn.run("jobtrace.web.server:app", host="0.0.0.0", port=port, log_level="info", reload=True)
+    host = os.environ.get("JOBTRACE_HOST", "127.0.0.1")
+    reload = os.environ.get("JOBTRACE_RELOAD") == "1"
+    print(f"Starting JobTrace Backend API at http://{host}:{port}")
+    uvicorn.run("jobtrace.web.server:app", host=host, port=port, log_level="info", reload=reload)
 
 
 def cmd_daemon(cfg: dict, store: Store) -> None:
     from .scheduler import Scheduler
+
+    def weekly() -> None:
+        cmd_scan(cfg, store, quiet=True)
+        cmd_digest(cfg, store)
+
     scheduler = Scheduler(
         alert_fn=lambda: cmd_alert(cfg, store),
-        digest_fn=lambda: cmd_digest(cfg, store),
+        digest_fn=weekly,
     )
     scheduler.run_forever()
 

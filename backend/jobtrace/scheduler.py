@@ -36,10 +36,9 @@ class Scheduler:
         now = datetime.datetime.now()
         today_str = now.strftime("%Y-%m-%d")
 
-        # 1. Daily Alert Check
+        # 1. Daily Alert Check (catches up if the process started after the slot)
         if (
-            now.hour == self.alert_hour
-            and now.minute >= self.alert_minute
+            (now.hour, now.minute) >= (self.alert_hour, self.alert_minute)
             and self.last_alert_date != today_str
         ):
             print(f"[{now.strftime('%H:%M:%S')}] Triggering daily alert pass...", flush=True)
@@ -52,8 +51,7 @@ class Scheduler:
         # 2. Weekly Digest Check (Mondays)
         if (
             now.weekday() == self.digest_weekday
-            and now.hour == self.digest_hour
-            and now.minute >= self.digest_minute
+            and (now.hour, now.minute) >= (self.digest_hour, self.digest_minute)
             and self.last_digest_date != today_str
         ):
             print(f"[{now.strftime('%H:%M:%S')}] Triggering weekly digest pass...", flush=True)

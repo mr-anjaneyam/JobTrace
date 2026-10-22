@@ -1,4 +1,4 @@
-# secrets and personal data — never commit these
+# secrets and personal data, never commit these
 .env
 .env.*
 !.env.example
