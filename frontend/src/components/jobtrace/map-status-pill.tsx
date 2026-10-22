@@ -24,7 +24,7 @@ export function MapStatusPill({
       {/* Compare Floating Pill if compare items selected */}
       {compareCount > 0 && (
         <button
-          className="gmap-compare-pill animate-bounce-subtle"
+          className="gmap-compare-pill motion-trigger-soft"
           onClick={onOpenCompare}
           title="Open Side-by-Side Comparison"
         >
@@ -45,7 +45,7 @@ export function MapStatusPill({
             </span>
           ) : (
             <>
-              <strong>JobRadar Live</strong>
+              <strong>JobTrace Live</strong>
               <span className="status-separator">·</span>
               <span>{totalCount} Active</span>
               <span className="status-separator">·</span>

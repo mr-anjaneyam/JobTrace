@@ -85,6 +85,13 @@ export const api = {
     return res.json();
   },
 
+  async search(query: string, signal?: AbortSignal): Promise<string[] | null> {
+    const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`, { signal });
+    if (!res.ok) throw new Error(`HTTP ${res.status} searching jobs`);
+    const data: { ids: string[] | null } = await res.json();
+    return data.ids;
+  },
+
   async getJobDetail(id: string): Promise<ApiJob> {
     const res = await fetch(`/api/jobs/${encodeURIComponent(id)}`);
     if (!res.ok) throw new Error(`HTTP ${res.status} fetching job detail`);

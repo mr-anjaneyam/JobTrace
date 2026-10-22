@@ -21,6 +21,7 @@ export const CompanyMark = memo(function CompanyMark({ job }: { job: Job }) {
           alt={job.company}
           className="company-logo-img"
           loading="lazy"
+          decoding="async"
           onError={() => setError(true)}
         />
       ) : (
@@ -104,7 +105,7 @@ export function MatchMatrix({
                   <td key={dimensions[i]}>
                     <span
                       className={`score-cell band-${scoreBand(score)}`}
-                      title={`${job.company} — ${dimensions[i]}: ${score} out of 100`}
+                      title={`${job.company} - ${dimensions[i]}: ${score} out of 100`}
                     >
                       {score}
                     </span>

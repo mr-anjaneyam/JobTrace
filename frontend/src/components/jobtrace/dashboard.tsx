@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo, useCallback, useDeferredValue, useRef, lazy, Suspense } from 'react';
 import {
   filterJobs,
   mapQuadrant,
@@ -9,13 +9,14 @@ import {
   type MapAxis,
 } from '@/lib/jobs';
 import { useWorkspace } from '@/hooks/use-workspace';
+import { usePresence } from '@/hooks/use-presence';
 import { api, type ApiJob, type ApiStateResponse } from '@/lib/api';
 import { GoogleMapView } from './google-map-view';
 import { MapOmnibox } from './map-omnibox';
 import { MapPlaceCard } from './map-place-card';
 import { MapExploreDrawer } from './map-explore-drawer';
 import { MapStatusPill } from './map-status-pill';
-import { CompareDialog } from './compare-dialog';
+const CompareDialog = lazy(() => import('./compare-dialog').then((m) => ({ default: m.CompareDialog })));
 import { UserProfileDialog } from './userprofile-dialog';
 import { SettingsDialog } from './settings-dialog';
 
@@ -89,6 +90,25 @@ export function Dashboard({
     loadState();
   }, []);
 
+  // Full-text (FTS5) search across titles, companies, locations and descriptions
+  const [ftsIds, setFtsIds] = useState<Set<string> | null>(null);
+  useEffect(() => {
+    const q = ws.search.trim();
+    if (!q) {
+      setFtsIds(null);
+      return;
+    }
+    const ctrl = new AbortController();
+    setFtsIds(null);
+    api
+      .search(q, ctrl.signal)
+      .then((ids) => setFtsIds(ids ? new Set(ids) : null))
+      .catch(() => {
+        if (!ctrl.signal.aborted) setFtsIds(null);
+      });
+    return () => ctrl.abort();
+  }, [ws.search]);
+
   // Transform backend jobs into rich Job format
   const allJobs: Job[] = useMemo(() => {
     return rawJobs.map(transformApiJob);
@@ -99,10 +119,12 @@ export function Dashboard({
     return [...new Set(allJobs.map((j) => j.source))].filter(Boolean);
   }, [allJobs]);
 
-  // Filtered dataset
-  const filteredJobs = useMemo(() => {
+  // Text/attribute filters; independent of the map axes and threshold so dragging those stays cheap
+  const baseFiltered = useMemo(() => {
+    // FTS ids cover full descriptions; fall back to client-side title/company match until they arrive
+    const useFts = ws.search.trim() !== '' && ftsIds !== null;
     let result = filterJobs(allJobs, {
-      search: ws.search,
+      search: useFts ? '' : ws.search,
       seniority: ws.seniority,
       location: ws.location,
       minimum: ws.minimum,
@@ -111,27 +133,37 @@ export function Dashboard({
       shortlistOnly: ws.shortlistOnly,
     }).filter((j) => ws.source === 'all' || j.source === ws.source);
 
-    if (selectedQuadrant !== 'all') {
-      result = result.filter((j) => {
-        const q = mapQuadrant(
-          axisScore(j, ws.xAxis as MapAxis),
-          axisScore(j, ws.yAxis as MapAxis),
-          ws.threshold
-        );
-        return q === selectedQuadrant;
-      });
+    if (useFts && ftsIds) {
+      result = result.filter((j) => ftsIds.has(j.id));
     }
-
     return result;
-  }, [allJobs, ws, selectedQuadrant]);
+  }, [allJobs, ws.search, ws.seniority, ws.location, ws.minimum, ws.saved, ws.shortlistOnly, ws.source, ftsIds]);
+
+  const filteredJobs = useMemo(() => {
+    if (selectedQuadrant === 'all') return baseFiltered;
+    return baseFiltered.filter((j) => {
+      const q = mapQuadrant(
+        axisScore(j, ws.xAxis as MapAxis),
+        axisScore(j, ws.yAxis as MapAxis),
+        ws.threshold
+      );
+      return q === selectedQuadrant;
+    });
+  }, [baseFiltered, selectedQuadrant, ws.xAxis, ws.yAxis, ws.threshold]);
+
+  // Defer heavy canvas & drawer updates so interactive filters/views respond immediately
+  const deferredFilteredJobs = useDeferredValue(filteredJobs);
 
   const selectedJob = useMemo(() => {
     return allJobs.find((j) => j.id === selectedId) || null;
   }, [allJobs, selectedId]);
 
-  const isNew = (job: Job) => newDays >= 0 && isNewSince(job, newDays);
+  const isNew = useCallback((job: Job) => newDays >= 0 && isNewSince(job, newDays), [newDays]);
 
-  const resetFilters = () => {
+  const placeCard = usePresence(selectedJob, 260);
+  const omnibox = usePresence(selectedJob ? null : true, 200);
+
+  const resetFilters = useCallback(() => {
     patch({
       search: '',
       seniority: 'all',
@@ -141,19 +173,42 @@ export function Dashboard({
       shortlistOnly: false,
     });
     setSelectedQuadrant('all');
-  };
+  }, [patch]);
 
-  const toggleSave = (id: string) => {
+  const toggleSave = useCallback((id: string) => {
     patch({
       saved: ws.saved.includes(id) ? ws.saved.filter((x) => x !== id) : [...ws.saved, id],
     });
-  };
+  }, [patch, ws.saved]);
 
-  const toggleCompare = (id: string) => {
+  const toggleCompare = useCallback((id: string) => {
     setCompare((current) =>
       current.includes(id) ? current.filter((x) => x !== id) : [...current, id].slice(-2)
     );
-  };
+  }, []);
+
+  const handleSelectJob = useCallback((id: string) => {
+    setSelectedId(id);
+  }, []);
+
+  const handleHoverJob = useCallback((id: string | null) => {
+    setHoveredId(id);
+  }, []);
+
+  const handleAxesChange = useCallback(
+    (x: MapAxis, y: MapAxis) => patch({ xAxis: x, yAxis: y }),
+    [patch]
+  );
+
+  const handleThresholdChange = useCallback((t: number) => patch({ threshold: t }), [patch]);
+
+  const lastStatusAt = useRef(0);
+  const throttledStatus = useCallback((text: string) => {
+    const now = performance.now();
+    if (now - lastStatusAt.current < 250) return;
+    lastStatusAt.current = now;
+    setScanStatus(text);
+  }, []);
 
   const handleDiscardJob = async (id: string) => {
     try {
@@ -185,13 +240,17 @@ export function Dashboard({
   const handleTriggerScan = () => {
     if (scanning) return;
     setScanning(true);
-    setScanStatus('Starting live job radar scan...');
+    setScanStatus('Starting live JobTrace scan...');
     const cleanup = api.createScanEventSource(
       (ev) => {
-        if (ev.type === 'progress' || ev.type === 'scrape') {
-          setScanStatus(ev.message || `Scanning ${ev.company || 'portals'}...`);
-        } else if (ev.type === 'match' || ev.type === 'score') {
-          setScanStatus(`Scoring ${ev.title || 'role'} (${ev.score || ''}/10)`);
+        if (ev.type === 'fetch') {
+          throttledStatus(`Fetched ${ev.company || 'portal'} (${ev.count ?? 0} open)`);
+        } else if (ev.type === 'scoring') {
+          throttledStatus(`Scoring ${ev.count ?? 0} new roles...`);
+        } else if (ev.type === 'looking' || ev.type === 'scored') {
+          throttledStatus(`Scoring ${ev.company || ''} ${ev.title || 'role'}`.trim());
+        } else if (ev.type === 'throttled' || ev.type === 'error') {
+          setScanStatus(ev.message || 'Scan paused');
         }
       },
       (err) => {
@@ -234,22 +293,22 @@ export function Dashboard({
     <div className="gmap-root-container">
       {/* 1. Full-Screen Interactive Opportunity Map Canvas */}
       <GoogleMapView
-        jobs={filteredJobs}
+        jobs={deferredFilteredJobs}
         selectedId={selectedId}
         hoveredId={hoveredId}
-        onSelectJob={(id) => setSelectedId(id)}
-        onHoverJob={(id) => setHoveredId(id)}
+        onSelectJob={handleSelectJob}
         isNew={isNew}
         xAxis={ws.xAxis as MapAxis}
         yAxis={ws.yAxis as MapAxis}
         threshold={ws.threshold}
-        onAxesChange={(x, y) => patch({ xAxis: x, yAxis: y })}
-        onThresholdChange={(t) => patch({ threshold: t })}
+        onAxesChange={handleAxesChange}
+        onThresholdChange={handleThresholdChange}
       />
 
       {/* 2. Floating Top-Left Omnibox (Search, Filter Chips, Scan, Settings) */}
-      {!selectedJob && (
+      {omnibox.item && (
         <MapOmnibox
+          state={omnibox.state}
           searchQuery={ws.search}
           onSearchChange={(q) => patch({ search: q })}
           shortlistOnly={ws.shortlistOnly}
@@ -278,13 +337,14 @@ export function Dashboard({
       )}
 
       {/* 3. Floating Place Details Card (Slides in when any job is clicked) */}
-      {selectedJob && (
+      {placeCard.item && (
         <MapPlaceCard
-          job={selectedJob}
+          state={placeCard.state}
+          job={placeCard.item}
           onClose={() => setSelectedId(null)}
-          saved={ws.saved.includes(selectedJob.id)}
+          saved={ws.saved.includes(placeCard.item.id)}
           onToggleSave={toggleSave}
-          isComparing={compare.includes(selectedJob.id)}
+          isComparing={compare.includes(placeCard.item.id)}
           onToggleCompare={toggleCompare}
           onDiscard={handleDiscardJob}
         />
@@ -292,10 +352,10 @@ export function Dashboard({
 
       {/* 4. Floating "Explore Results" Bottom Drawer */}
       <MapExploreDrawer
-        jobs={filteredJobs}
+        jobs={deferredFilteredJobs}
         selectedId={selectedId}
-        onSelectJob={(id) => setSelectedId(id)}
-        onHoverJob={(id) => setHoveredId(id)}
+        onSelectJob={handleSelectJob}
+        onHoverJob={handleHoverJob}
         saved={ws.saved}
         onToggleSave={toggleSave}
         comparing={compare}
@@ -306,7 +366,7 @@ export function Dashboard({
 
       {/* 5. Floating Bottom-Left Radar Status & Compare Pill */}
       <MapStatusPill
-        totalCount={filteredJobs.length}
+        totalCount={deferredFilteredJobs.length}
         sweetCount={sweetCount}
         shortlistCount={ws.saved.length}
         compareCount={compare.length}
@@ -316,11 +376,11 @@ export function Dashboard({
       />
 
       {/* 6. Modals (Compare, Profile, Settings) */}
-      <CompareDialog
-        jobs={compareJobs}
-        open={compareOpen && compareJobs.length === 2}
-        onOpenChange={setCompareOpen}
-      />
+      {compareOpen && compareJobs.length === 2 && (
+        <Suspense fallback={null}>
+          <CompareDialog jobs={compareJobs} open onOpenChange={setCompareOpen} />
+        </Suspense>
+      )}
 
       <UserProfileDialog
         open={profileOpen}

@@ -1,4 +1,6 @@
 import { useState, useRef, useEffect, type FormEvent } from 'react';
+import { Presence } from '@/components/ui/presence';
+import type { PresenceState } from '@/hooks/use-presence';
 import {
   Search,
   X,
@@ -39,6 +41,7 @@ export interface MapOmniboxProps {
   onResetFilters: () => void;
   activeFilterCount: number;
   onPurgeClosed?: () => Promise<any>;
+  state?: PresenceState;
 }
 
 export function MapOmnibox({
@@ -66,6 +69,7 @@ export function MapOmnibox({
   onResetFilters,
   activeFilterCount,
   onPurgeClosed,
+  state = 'open',
 }: MapOmniboxProps) {
   const [seniorityOpen, setSeniorityOpen] = useState(false);
   const [sourceOpen, setSourceOpen] = useState(false);
@@ -76,6 +80,21 @@ export function MapOmnibox({
   const containerRef = useRef<HTMLDivElement>(null);
   const seniorityBtnRef = useRef<HTMLButtonElement>(null);
   const sourceBtnRef = useRef<HTMLButtonElement>(null);
+
+  const [localSearch, setLocalSearch] = useState(searchQuery);
+
+  useEffect(() => {
+    setLocalSearch(searchQuery);
+  }, [searchQuery]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (localSearch !== searchQuery) {
+        onSearchChange(localSearch);
+      }
+    }, 180);
+    return () => clearTimeout(timer);
+  }, [localSearch, searchQuery, onSearchChange]);
 
   const handleCleanArchived = async () => {
     if (!onPurgeClosed || isPurging) return;
@@ -109,11 +128,11 @@ export function MapOmnibox({
   }, []);
 
   return (
-    <div ref={containerRef} className="gmap-omnibox-shell gmap-ui-floating">
+    <div ref={containerRef} className="gmap-omnibox-shell gmap-ui-floating motion-pop" data-state={state}>
       {/* Primary Google Maps Floating Search Card */}
       <div className="gmap-omnibox-card">
         {/* Brand Compass / Icon */}
-        <div className="omnibox-logo-btn" title="JobRadar Map Navigation">
+        <div className="omnibox-logo-btn" title="JobTrace Map Navigation">
           <Compass size={20} className={isScanning ? 'animate-spin text-primary' : 'text-primary'} />
         </div>
 
@@ -122,15 +141,23 @@ export function MapOmnibox({
           <input
             type="text"
             className="omnibox-input"
-            value={searchQuery}
-            onChange={(e) => onSearchChange(e.target.value)}
+            value={localSearch}
+            onChange={(e) => setLocalSearch(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                onSearchChange(localSearch);
+              }
+            }}
             placeholder="Search roles, companies, tech stack..."
             aria-label="Search opportunities"
           />
-          {searchQuery && (
+          {localSearch && (
             <button
               className="omnibox-clear-btn"
-              onClick={() => onSearchChange('')}
+              onClick={() => {
+                setLocalSearch('');
+                onSearchChange('');
+              }}
               title="Clear search"
             >
               <X size={15} />
@@ -172,8 +199,8 @@ export function MapOmnibox({
 
       {/* Streaming Live Scan Status Banner if active */}
       {scanStatus && (
-        <div className="gmap-scan-banner animate-pulse">
-          <Sparkles size={13} className="text-primary" />
+        <div className="gmap-scan-banner animate-fade-in">
+          <Sparkles size={13} className="text-primary animate-pulse" />
           <span className="truncate">{scanStatus}</span>
         </div>
       )}
@@ -288,9 +315,11 @@ export function MapOmnibox({
       </div>
 
       {/* Floating Dropdown Menus positioned cleanly outside the scrolling rail directly under their chip */}
-      {seniorityOpen && (
+      <Presence show={seniorityOpen} exitMs={170}>
+        {(st) => (
         <div
-          className="gmap-floating-dropdown seniority-dropdown animate-fade-in"
+          className="gmap-floating-dropdown seniority-dropdown motion-pop"
+          data-state={st}
           style={{
             left: seniorityBtnRef.current ? `${seniorityBtnRef.current.offsetLeft}px` : undefined,
           }}
@@ -310,11 +339,14 @@ export function MapOmnibox({
             </button>
           ))}
         </div>
-      )}
+        )}
+      </Presence>
 
-      {sourceOpen && (
+      <Presence show={sourceOpen} exitMs={170}>
+        {(st) => (
         <div
-          className="gmap-floating-dropdown source-dropdown animate-fade-in"
+          className="gmap-floating-dropdown source-dropdown motion-pop"
+          data-state={st}
           style={{
             left: sourceBtnRef.current ? `${sourceBtnRef.current.offsetLeft}px` : undefined,
           }}
@@ -334,7 +366,8 @@ export function MapOmnibox({
             </button>
           ))}
         </div>
-      )}
+        )}
+      </Presence>
     </div>
   );
 }

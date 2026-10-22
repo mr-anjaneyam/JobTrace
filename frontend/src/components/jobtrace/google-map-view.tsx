@@ -13,6 +13,8 @@ import {
 } from 'lucide-react';
 import { TransformWrapper, TransformComponent, type ReactZoomPanPinchRef } from 'react-zoom-pan-pinch';
 import { mapAxes, mapQuadrant, positionMarkers, type Job, type MapAxis } from '@/lib/jobs';
+import { MAX_MAP_PINS } from '@/lib/perf';
+import { Presence } from '@/components/ui/presence';
 import { CompanyMark } from './match-matrix';
 
 export type MapStyleMode = 'carto' | 'satellite' | 'heatmap';
@@ -22,7 +24,6 @@ export interface GoogleMapViewProps {
   selectedId: string | null;
   hoveredId: string | null;
   onSelectJob: (id: string) => void;
-  onHoverJob: (id: string | null) => void;
   isNew: (job: Job) => boolean;
   xAxis: MapAxis;
   yAxis: MapAxis;
@@ -46,6 +47,7 @@ interface MapPinMarkerProps {
   isSweet: boolean;
   quad: string;
   recent: boolean;
+  index: number;
   onSelect: (id: string) => void;
   onHover: (marker: { job: Job; px: number; py: number; x: number; y: number } | null) => void;
 }
@@ -57,6 +59,7 @@ const MapPinMarker = memo(function MapPinMarker({
   isSweet,
   quad,
   recent,
+  index,
   onSelect,
   onHover,
 }: MapPinMarkerProps) {
@@ -78,11 +81,12 @@ const MapPinMarker = memo(function MapPinMarker({
   return (
     <div
       className={`gmap-pin quad-${quad} ${isSelected ? 'pin-selected' : ''} ${isHovered ? 'pin-hovered' : ''} ${isSweet ? 'pin-sweet' : ''}`}
-      style={{
-        left: `${px}px`,
-        top: `${py}px`,
-        transform: `translate(-50%, -50%) scale(calc(var(--pin-scale, 1) * ${isSelected ? 1.22 : isHovered ? 1.15 : 1}))`,
-      }}
+      style={
+        {
+          transform: `translate3d(${px}px, ${py}px, 0)`,
+          '--pin-delay': `${Math.min(index * 14, 700)}ms`,
+        } as CSSProperties
+      }
       onClick={handleClick}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
@@ -90,30 +94,30 @@ const MapPinMarker = memo(function MapPinMarker({
       tabIndex={0}
       aria-label={`${job.company} - ${job.title}`}
     >
-      {/* Google Maps Pin Teardrop/Disc Body */}
-      <div className="pin-body">
-        <CompanyMark job={job} />
-        {recent && <span className="pin-new-badge" title="Discovered recently" />}
-      </div>
+      <div className="pin-anchor" style={{ transform: 'translate(-50%, -50%) scale(var(--pin-scale, 1))' }}>
+        {/* Google Maps Pin Teardrop/Disc Body */}
+        <div className="pin-body">
+          <CompanyMark job={job} />
+          {recent && <span className="pin-new-badge" title="Discovered recently" />}
+          {/* Match Score Badge on Pin (anchored to top-right of the circular body) */}
+          <span className="pin-score-badge">{job.score}%</span>
+        </div>
 
-      {/* Match Score Badge on Pin */}
-      <span className="pin-score-badge">{job.score}%</span>
-
-      {/* Pin Street/Company Label */}
-      <div className="pin-label">
-        <span className="pin-company-name">{job.company}</span>
-        <span className="pin-job-title">{job.title}</span>
+        {/* Pin Street/Company Label */}
+        <div className="pin-label">
+          <span className="pin-company-name">{job.company}</span>
+          <span className="pin-job-title">{job.title}</span>
+        </div>
       </div>
     </div>
   );
 });
 
-export function GoogleMapView({
+export const GoogleMapView = memo(function GoogleMapView({
   jobs,
   selectedId,
   hoveredId,
   onSelectJob,
-  onHoverJob,
   isNew,
   xAxis,
   yAxis,
@@ -126,8 +130,26 @@ export function GoogleMapView({
   const canvasRef = useRef<HTMLDivElement>(null);
 
   const [dimensions, setDimensions] = useState({ width: 1400, height: 900 });
+  const [currentZoom, setCurrentZoom] = useState(1);
+
+  // Vast Infinite World Dimensions: seamless navigation plane in all directions
+  const WORLD_W = 7000;
+  const WORLD_H = 5000;
+  const worldCenterX = WORLD_W / 2;
+  const worldCenterY = WORLD_H / 2;
+
+  // Matrix Opportunity Area centered in the vast world
+  const MATRIX_W = Math.max(1400, dimensions.width);
+  const MATRIX_H = Math.max(900, dimensions.height);
+  const matrixOriginX = worldCenterX - MATRIX_W / 2;
+  const matrixOriginY = worldCenterY - MATRIX_H / 2;
+
+  // Quadrant Split Crosshair in World Coordinates
+  const splitX = matrixOriginX + (threshold / 100) * MATRIX_W;
+  const splitY = matrixOriginY + ((100 - threshold) / 100) * MATRIX_H;
+
   const [mapStyle, setMapStyle] = useState<MapStyleMode>('carto');
-  const [showLabels, setShowLabels] = useState(true);
+  const [showLabels, setShowLabels] = useState(false);
   const [showAxesMenu, setShowAxesMenu] = useState(false);
   const [showLayerMenu, setShowLayerMenu] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -137,6 +159,12 @@ export function GoogleMapView({
   const dragStartPos = useRef<{ x: number; y: number } | null>(null);
   const rafId = useRef<number | null>(null);
   const lastScaleRef = useRef(1);
+  const transformStateRef = useRef<{ scale: number; positionX: number; positionY: number }>({
+    scale: 1,
+    positionX: 0,
+    positionY: 0,
+  });
+  const prevSelectedIdRef = useRef<string | null>(null);
 
   // Directly mutate canvas CSS variable --pin-scale via requestAnimationFrame
   // This eliminates all React re-renders during continuous zoom & pan gestures
@@ -172,10 +200,9 @@ export function GoogleMapView({
 
     const updateSize = () => {
       const rect = node.getBoundingClientRect();
-      setDimensions({
-        width: Math.max(800, Math.round(rect.width)),
-        height: Math.max(600, Math.round(rect.height)),
-      });
+      const width = Math.max(800, Math.round(rect.width));
+      const height = Math.max(600, Math.round(rect.height));
+      setDimensions((prev) => (prev.width === width && prev.height === height ? prev : { width, height }));
     };
 
     updateSize();
@@ -188,15 +215,17 @@ export function GoogleMapView({
     };
   }, []);
 
-  // Compute positioned markers with collision avoidance
+  // Compute positioned markers with collision avoidance in World Coordinates
   const markers = useMemo(() => {
-    return positionMarkers(jobs, xAxis, yAxis, dimensions.width, dimensions.height);
-  }, [jobs, xAxis, yAxis, dimensions.width, dimensions.height]);
-
-  // Only render SVG leader lines for markers that were physically displaced
-  const visibleLeaders = useMemo(() => {
-    return markers.filter((m) => Math.hypot(m.px - m.trueX, m.py - m.trueY) > 4);
-  }, [markers]);
+    const placed = positionMarkers(jobs, xAxis, yAxis, MATRIX_W, MATRIX_H, MAX_MAP_PINS);
+    return placed.map((m) => ({
+      ...m,
+      px: matrixOriginX + m.px,
+      py: matrixOriginY + m.py,
+      trueX: matrixOriginX + m.trueX,
+      trueY: matrixOriginY + m.trueY,
+    }));
+  }, [jobs, xAxis, yAxis, MATRIX_W, MATRIX_H, matrixOriginX, matrixOriginY]);
 
   const xLabel = mapAxes.find((a) => a.value === xAxis)?.label || 'Technical Fit';
   const yLabel = mapAxes.find((a) => a.value === yAxis)?.label || 'Company Relevance';
@@ -224,31 +253,75 @@ export function GoogleMapView({
     }
   };
 
-  // Recenter / Fit map to bounds
+  // Recenter / Fit map to bounds: snaps back to content center of the infinite plane (manual button only)
   const handleRecenter = () => {
     if (transformRef.current) {
-      transformRef.current.resetTransform(300);
+      const targetX = Math.round(dimensions.width / 2 - worldCenterX);
+      const targetY = Math.round(dimensions.height / 2 - worldCenterY);
+      transformRef.current.setTransform(targetX, targetY, 1, 550, 'easeOutQuart');
+      transformStateRef.current = { scale: 1, positionX: targetX, positionY: targetY };
       applyPinScale(1);
+      setCurrentZoom(1);
     }
   };
 
-  // Pan to selected marker (offsetting center so marker is visible to the right of the 440px place card)
+  // Natural selection handling:
+  // 1. When an icon is clicked, keep the graph AT ITS EXACT CURRENT POSITION AND CURRENT ZOOM.
+  //    Only gently slide horizontally if the clicked icon would be hidden behind the place card.
+  // 2. When closing the popup, NEVER reset the graph to 100%. The graph stays exactly where it was.
   useEffect(() => {
-    if (selectedId && transformRef.current) {
-      const target = markers.find((m) => m.job.id === selectedId);
-      if (target) {
-        const visibleCenterX = (dimensions.width + 440) / 2;
-        const visibleCenterY = dimensions.height / 2;
-        const targetX = visibleCenterX - target.px;
-        const targetY = visibleCenterY - target.py;
-        transformRef.current.setTransform(targetX, targetY, 1, 350);
-        applyPinScale(1);
-      }
-    } else if (!selectedId && transformRef.current) {
-      transformRef.current.resetTransform(300);
-      applyPinScale(1);
+    if (selectedId === prevSelectedIdRef.current) return;
+    prevSelectedIdRef.current = selectedId;
+
+    // Closing popup: NEVER reset or move the map! Preserve zoom and pan completely.
+    if (!selectedId || !transformRef.current) return;
+
+    const target = markers.find((m) => m.job.id === selectedId);
+    if (!target) return;
+
+    const currentTransform = transformRef.current.state ?? transformStateRef.current;
+    const currentScale = currentTransform.scale > 0 ? currentTransform.scale : 1;
+    const currentPosX = currentTransform.positionX;
+    const currentPosY = currentTransform.positionY;
+
+    // Calculate marker's current position on the user's screen
+    const screenX = target.px * currentScale + currentPosX;
+    const screenY = target.py * currentScale + currentPosY;
+
+    const isMobile = dimensions.width < 768;
+    const cardWidth = isMobile ? 0 : 470; // 440px place card + margin
+
+    // Check if marker is already visible in the clear viewport area
+    const isVisible =
+      screenX >= cardWidth + 30 &&
+      screenX <= dimensions.width - 40 &&
+      screenY >= 60 &&
+      screenY <= dimensions.height - 60;
+
+    // If marker is already visible under the user's cursor, DO NOT move the map!
+    if (isVisible) return;
+
+    // If marker falls under the place card on the left (screenX < cardWidth + 30)
+    // but is in vertical view: gently slide X right just enough so the pin clears the card.
+    // Notice: Zoom scale is 100% PRESERVED, Y position is 100% PRESERVED!
+    if (screenX < cardWidth + 30 && screenY >= 40 && screenY <= dimensions.height - 40) {
+      const neededShift = Math.round(cardWidth + 60 - screenX);
+      const targetX = currentPosX + neededShift;
+      transformRef.current.setTransform(targetX, currentPosY, currentScale, 450, 'easeOutQuart');
+      transformStateRef.current = { scale: currentScale, positionX: targetX, positionY: currentPosY };
+      return;
     }
-  }, [selectedId, dimensions.width, dimensions.height, markers, applyPinScale]);
+
+    // If marker was selected from off-screen (e.g. from bottom drawer "View on Map"):
+    // smoothly center it in the unobstructed area, preserving the user's current zoom scale!
+    const visibleCenterX = isMobile ? dimensions.width / 2 : (dimensions.width + cardWidth) / 2;
+    const visibleCenterY = dimensions.height / 2;
+    const targetX = Math.round(visibleCenterX - target.px * currentScale);
+    const targetY = Math.round(visibleCenterY - target.py * currentScale);
+
+    transformRef.current.setTransform(targetX, targetY, currentScale, 600, 'easeOutQuart');
+    transformStateRef.current = { scale: currentScale, positionX: targetX, positionY: targetY };
+  }, [selectedId, dimensions.width, dimensions.height, markers]);
 
   // Stable callbacks for memoized pins
   const handleSelectJob = useCallback(
@@ -261,15 +334,9 @@ export function GoogleMapView({
 
   const handleHoverMarker = useCallback(
     (marker: { job: Job; px: number; py: number; x: number; y: number } | null) => {
-      if (marker) {
-        onHoverJob(marker.job.id);
-        setTooltipJob(marker);
-      } else {
-        onHoverJob(null);
-        setTooltipJob(null);
-      }
+      setTooltipJob(marker);
     },
-    [onHoverJob]
+    []
   );
 
   return (
@@ -283,17 +350,21 @@ export function GoogleMapView({
     >
       <TransformWrapper
         ref={transformRef}
-        minScale={0.7}
-        maxScale={4}
+        minScale={0.35}
+        maxScale={4.5}
         initialScale={1}
-        centerOnInit
+        limitToBounds={false}
+        centerOnInit={false}
+        initialPositionX={Math.round(dimensions.width / 2 - worldCenterX)}
+        initialPositionY={Math.round(dimensions.height / 2 - worldCenterY)}
         smooth
         wheel={{ step: 0.06 }}
+        zoomAnimation={{ animationTime: 320, animationType: 'easeOutQuart' }}
         panning={{
           velocityDisabled: true,
           excluded: ['gmap-ui-floating', 'gmap-ctrl-btn', 'gmap-popup-menu'],
         }}
-        doubleClick={{ mode: 'zoomIn', step: 0.5 }}
+        doubleClick={{ mode: 'zoomIn', step: 0.5, animationTime: 450, animationType: 'easeOutQuart' }}
         onPanningStart={(_ref, event) => {
           dragStartPos.current = {
             x: 'clientX' in event ? event.clientX : 0,
@@ -309,20 +380,71 @@ export function GoogleMapView({
             }
           }
         }}
-        onPanningStop={() => {
+        onPanningStop={(ref) => {
           setTimeout(() => {
             isDraggingRef.current = false;
           }, 80);
+          const state = ref?.state;
+          if (state && typeof state.scale === 'number') {
+            transformStateRef.current = {
+              scale: state.scale,
+              positionX: state.positionX ?? 0,
+              positionY: state.positionY ?? 0,
+            };
+          }
+        }}
+        onZoomStop={(ref) => {
+          const state = ref?.state;
+          if (state && typeof state.scale === 'number') {
+            setCurrentZoom(state.scale);
+            transformStateRef.current = {
+              scale: state.scale,
+              positionX: state.positionX ?? 0,
+              positionY: state.positionY ?? 0,
+            };
+          }
         }}
         onTransform={(ref, state) => {
           const s = state?.scale ?? ref?.state?.scale;
+          const px = state?.positionX ?? ref?.state?.positionX;
+          const py = state?.positionY ?? ref?.state?.positionY;
           if (typeof s === 'number') {
+            transformStateRef.current.scale = s;
             applyPinScale(s);
           }
+          if (typeof px === 'number') transformStateRef.current.positionX = px;
+          if (typeof py === 'number') transformStateRef.current.positionY = py;
         }}
       >
         {({ zoomIn, zoomOut }) => (
           <div className="gmap-canvas-wrapper">
+            {/* 4 Engraved Corner Quadrant Watermarks (Ground Layer: rendered under pins and canvas elements) */}
+            <div className="gmap-corner-watermark corner-top-left" aria-hidden="true">
+              <span className="corner-tag">SECTOR II</span>
+              <h3 className="corner-title">Stretch Reach</h3>
+              <p className="corner-sub">High Ambition · Reach</p>
+            </div>
+
+            <div className="gmap-corner-watermark corner-top-right" aria-hidden="true">
+              <span className="corner-tag sweet-tag">
+                <Sparkles size={11} className="inline mr-1" /> PRIME SECTOR
+              </span>
+              <h3 className="corner-title text-emerald-700/80 dark:text-emerald-400/80">Sweet Spot</h3>
+              <p className="corner-sub">Top Profile Alignment</p>
+            </div>
+
+            <div className="gmap-corner-watermark corner-bottom-left" aria-hidden="true">
+              <span className="corner-tag">SECTOR III</span>
+              <h3 className="corner-title">Exploration</h3>
+              <p className="corner-sub">Emerging Matches</p>
+            </div>
+
+            <div className="gmap-corner-watermark corner-bottom-right" aria-hidden="true">
+              <span className="corner-tag">SECTOR IV</span>
+              <h3 className="corner-title">Safety Harbor</h3>
+              <p className="corner-sub">High Feasibility</p>
+            </div>
+
             <TransformComponent
               wrapperClass="gmap-transform-viewport"
               contentClass="gmap-transform-content"
@@ -331,62 +453,75 @@ export function GoogleMapView({
                 ref={canvasRef}
                 className={`gmap-canvas ${showLabels ? 'with-labels' : ''}`}
                 style={{
-                  width: `${dimensions.width}px`,
-                  height: `${dimensions.height}px`,
-                  '--split-x': `${threshold}%`,
-                  '--split-y': `${100 - threshold}%`,
+                  width: `${WORLD_W}px`,
+                  height: `${WORLD_H}px`,
                   '--pin-scale': '1',
                 } as CSSProperties}
               >
-                {/* Quadrant Sector Backgrounds (Map Districts) */}
-                <div className="gmap-district district-stretch">
-                  <div
-                    className="district-watermark"
-                    style={{ transform: 'scale(var(--pin-scale, 1))', transformOrigin: 'top left' }}
-                  >
-                    <span className="district-tag">SECTOR II</span>
-                    <h3>Stretch Reach</h3>
-                    <p>High Ambition · Reach Opportunities</p>
-                  </div>
-                </div>
+                {/* 4 Infinite Atmospheric Quadrants radiating outward from the split crosshair */}
+                <div
+                  className="gmap-district district-stretch"
+                  style={{
+                    position: 'absolute',
+                    left: 0,
+                    top: 0,
+                    width: `${splitX}px`,
+                    height: `${splitY}px`,
+                    background:
+                      mapStyle === 'satellite'
+                        ? 'radial-gradient(ellipse at 100% 100%, rgba(245, 158, 11, 0.1) 0%, rgba(245, 158, 11, 0.03) 40%, transparent 75%)'
+                        : mapStyle === 'heatmap'
+                        ? 'radial-gradient(ellipse at 100% 100%, rgba(245, 158, 11, 0.15) 0%, transparent 65%)'
+                        : 'radial-gradient(ellipse at 100% 100%, rgba(245, 158, 11, 0.12) 0%, rgba(254, 243, 199, 0.04) 40%, transparent 75%)',
+                  }}
+                />
+                <div
+                  className="gmap-district district-sweet"
+                  style={{
+                    position: 'absolute',
+                    left: `${splitX}px`,
+                    top: 0,
+                    width: `${WORLD_W - splitX}px`,
+                    height: `${splitY}px`,
+                    background:
+                      mapStyle === 'satellite'
+                        ? 'radial-gradient(ellipse at 0% 100%, rgba(16, 185, 129, 0.16) 0%, rgba(6, 182, 212, 0.05) 45%, transparent 75%)'
+                        : mapStyle === 'heatmap'
+                        ? 'radial-gradient(ellipse at 0% 100%, rgba(16, 185, 129, 0.25) 0%, rgba(6, 182, 212, 0.1) 50%, transparent 80%)'
+                        : 'radial-gradient(ellipse at 0% 100%, rgba(16, 185, 129, 0.15) 0%, rgba(209, 250, 229, 0.05) 45%, transparent 75%)',
+                  }}
+                />
+                <div
+                  className="gmap-district district-low"
+                  style={{
+                    position: 'absolute',
+                    left: 0,
+                    top: `${splitY}px`,
+                    width: `${splitX}px`,
+                    height: `${WORLD_H - splitY}px`,
+                    background:
+                      mapStyle === 'satellite'
+                        ? 'radial-gradient(ellipse at 100% 0%, rgba(71, 85, 105, 0.12) 0%, transparent 70%)'
+                        : 'radial-gradient(ellipse at 100% 0%, rgba(148, 163, 184, 0.1) 0%, transparent 70%)',
+                  }}
+                />
+                <div
+                  className="gmap-district district-safety"
+                  style={{
+                    position: 'absolute',
+                    left: `${splitX}px`,
+                    top: `${splitY}px`,
+                    width: `${WORLD_W - splitX}px`,
+                    height: `${WORLD_H - splitY}px`,
+                    background:
+                      mapStyle === 'satellite'
+                        ? 'radial-gradient(ellipse at 0% 0%, rgba(59, 130, 246, 0.12) 0%, transparent 70%)'
+                        : 'radial-gradient(ellipse at 0% 0%, rgba(59, 130, 246, 0.11) 0%, rgba(219, 234, 254, 0.04) 45%, transparent 75%)',
+                  }}
+                />
 
-                <div className="gmap-district district-sweet">
-                  <div
-                    className="district-watermark"
-                    style={{ transform: 'scale(var(--pin-scale, 1))', transformOrigin: 'top right' }}
-                  >
-                    <span className="district-tag sweet-tag">
-                      <Sparkles size={11} className="inline mr-1" /> PRIME SECTOR
-                    </span>
-                    <h3>Sweet Spot</h3>
-                    <p>Top Profile Alignment & Domain Fit</p>
-                  </div>
-                </div>
-
-                <div className="gmap-district district-low">
-                  <div
-                    className="district-watermark"
-                    style={{ transform: 'scale(var(--pin-scale, 1))', transformOrigin: 'bottom left' }}
-                  >
-                    <span className="district-tag">SECTOR III</span>
-                    <h3>Exploration</h3>
-                    <p>Secondary & Emerging Matches</p>
-                  </div>
-                </div>
-
-                <div className="gmap-district district-safety">
-                  <div
-                    className="district-watermark"
-                    style={{ transform: 'scale(var(--pin-scale, 1))', transformOrigin: 'bottom right' }}
-                  >
-                    <span className="district-tag">SECTOR IV</span>
-                    <h3>Safety Harbor</h3>
-                    <p>High Feasibility · Secure Alignment</p>
-                  </div>
-                </div>
-
-                {/* Clean Precision Grid & Coordinate Lines */}
-                <svg className="gmap-grid-layer" width="100%" height="100%" aria-hidden="true">
+                {/* Clean Precision Grid & Coordinate Lines across the whole vast plane */}
+                <svg className="gmap-grid-layer" width={WORLD_W} height={WORLD_H} aria-hidden="true">
                   <defs>
                     <radialGradient id="heatGlow" cx="65%" cy="35%" r="45%">
                       <stop offset="0%" stopColor="#10b981" stopOpacity="0.18" />
@@ -399,58 +534,61 @@ export function GoogleMapView({
                     <rect width="100%" height="100%" fill="url(#heatGlow)" />
                   )}
 
-                  {/* Subtle Grid Coordinates */}
-                  {[25, 50, 75].map((pct) => (
+                  {/* Matrix Coordinate Subdivisions */}
+                  {[0.25, 0.5, 0.75].map((pct) => (
                     <g key={pct}>
-                      <line x1={`${pct}%`} x2={`${pct}%`} y1="0%" y2="100%" className="grid-subtle-line" />
-                      <line x1="0%" x2="100%" y1={`${pct}%`} y2={`${pct}%`} className="grid-subtle-line" />
-                    </g>
-                  ))}
-
-                  {/* Threshold Split Boundaries */}
-                  <line
-                    x1={`${threshold}%`}
-                    x2={`${threshold}%`}
-                    y1="0%"
-                    y2="100%"
-                    className="grid-boundary-line vertical-boundary"
-                  />
-                  <line
-                    x1="0%"
-                    x2="100%"
-                    y1={`${100 - threshold}%`}
-                    y2={`${100 - threshold}%`}
-                    className="grid-boundary-line horizontal-boundary"
-                  />
-
-                  {/* Marker Collision Leader Lines (Rendered ONLY for displaced pins) */}
-                  {visibleLeaders.map((m) => (
-                    <g key={`leader-${m.job.id}`} className="gmap-leader-group">
                       <line
-                        x1={m.trueX}
-                        y1={m.trueY}
-                        x2={m.px}
-                        y2={m.py}
-                        className={`gmap-leader-line ${hoveredId === m.job.id ? 'highlighted' : ''}`}
+                        x1={matrixOriginX + pct * MATRIX_W}
+                        x2={matrixOriginX + pct * MATRIX_W}
+                        y1={matrixOriginY}
+                        y2={matrixOriginY + MATRIX_H}
+                        className="grid-subtle-line"
                       />
-                      <circle
-                        cx={m.trueX}
-                        cy={m.trueY}
-                        r={hoveredId === m.job.id ? 3 : 2}
-                        className="gmap-leader-anchor"
+                      <line
+                        x1={matrixOriginX}
+                        x2={matrixOriginX + MATRIX_W}
+                        y1={matrixOriginY + pct * MATRIX_H}
+                        y2={matrixOriginY + pct * MATRIX_H}
+                        className="grid-subtle-line"
                       />
                     </g>
                   ))}
+
+                  {/* Infinite Threshold Split Crosshair Axes extending end-to-end */}
+                  <line
+                    x1="0"
+                    y1={splitY}
+                    x2={WORLD_W}
+                    y2={splitY}
+                    className="grid-infinite-axis"
+                  />
+                  <line
+                    x1={splitX}
+                    y1="0"
+                    x2={splitX}
+                    y2={WORLD_H}
+                    className="grid-infinite-axis"
+                  />
+
+                  {/* Precision Reticle at Threshold Crosshair */}
+                  <g className="gmap-reticle" transform={`translate(${splitX}, ${splitY})`}>
+                    <circle r="12" fill="none" stroke="currentColor" strokeWidth="1.5" opacity="0.4" />
+                    <circle r="2.5" fill="currentColor" opacity="0.8" />
+                    <line x1="-18" y1="0" x2="-5" y2="0" stroke="currentColor" strokeWidth="1.5" opacity="0.6" />
+                    <line x1="5" y1="0" x2="18" y2="0" stroke="currentColor" strokeWidth="1.5" opacity="0.6" />
+                    <line x1="0" y1="-18" x2="0" y2="-5" stroke="currentColor" strokeWidth="1.5" opacity="0.6" />
+                    <line x1="0" y1="5" x2="0" y2="18" stroke="currentColor" strokeWidth="1.5" opacity="0.6" />
+                  </g>
                 </svg>
 
-                {/* Axis Labels Overlay positioned along the quadrant division lines (never covered by toolbars) */}
+                {/* Axis Labels Overlay positioned along the infinite coordinate axes */}
                 <div
                   className="gmap-axis-tag gmap-axis-x"
                   style={{
-                    left: `${Math.min(threshold + 4, 82)}%`,
-                    bottom: '72px',
+                    left: `${matrixOriginX + MATRIX_W - 130}px`,
+                    top: `${splitY + 12}px`,
                     transform: 'scale(var(--pin-scale, 1))',
-                    transformOrigin: 'bottom left',
+                    transformOrigin: 'top left',
                   }}
                 >
                   <span className="font-semibold text-primary">X:</span> <span>{xLabel}</span> →
@@ -458,8 +596,8 @@ export function GoogleMapView({
                 <div
                   className="gmap-axis-tag gmap-axis-y"
                   style={{
-                    left: `${Math.min(threshold + 4, 82)}%`,
-                    top: '20px',
+                    left: `${splitX + 14}px`,
+                    top: `${matrixOriginY + 18}px`,
                     transform: 'scale(var(--pin-scale, 1))',
                     transformOrigin: 'top left',
                   }}
@@ -468,10 +606,10 @@ export function GoogleMapView({
                 </div>
 
                 {/* Job Location Pins - Each pin is memoized for instant 60fps responsiveness */}
-                {markers.map((m) => {
+                {markers.map((m, i) => {
                   const quad = mapQuadrant(m.x, m.y, threshold);
                   const isSelected = selectedId === m.job.id;
-                  const isHovered = hoveredId === m.job.id;
+                  const isHovered = tooltipJob?.job.id === m.job.id;
                   const isSweet = quad === 'sweet';
                   const recent = isNew(m.job);
 
@@ -484,23 +622,23 @@ export function GoogleMapView({
                       isSweet={isSweet}
                       quad={quad}
                       recent={recent}
+                      index={i}
                       onSelect={handleSelectJob}
                       onHover={handleHoverMarker}
                     />
                   );
                 })}
 
-                {/* Google Maps Hover Place Popup / Tooltip with automatic edge clamping and flipping */}
+                {/* Google Maps Hover Place Popup / Tooltip */}
                 {tooltipJob && (() => {
-                  const isNearTop = tooltipJob.py < 130;
-                  const clampedX = Math.max(140, Math.min(dimensions.width - 140, tooltipJob.px));
+                  const isNearTop = tooltipJob.py < matrixOriginY + 140;
                   const topPos = isNearTop ? tooltipJob.py + 26 : tooltipJob.py - 16;
 
                   return (
                     <div
                       className={`gmap-hover-card ${isNearTop ? 'card-below' : 'card-above'}`}
                       style={{
-                        left: `${clampedX}px`,
+                        left: `${tooltipJob.px}px`,
                         top: `${topPos}px`,
                         transform: `translate(-50%, ${isNearTop ? '0' : '-100%'}) scale(var(--pin-scale, 1))`,
                         transformOrigin: isNearTop ? 'top center' : 'bottom center',
@@ -534,11 +672,24 @@ export function GoogleMapView({
               </div>
             </TransformComponent>
 
+            {/* Google Maps Dynamic Coordinate Scale Indicator */}
+            <div className="gmap-scale-cluster gmap-ui-floating">
+              <div className="gmap-scale-indicator">
+                <div className="scale-bar" />
+                <span>{`±${Math.max(2, Math.round(12 / (currentZoom || 1)))}% Resolution`}</span>
+              </div>
+            </div>
+
             {/* Google Maps Floating Controls (Bottom-Right) */}
             <div className="gmap-ctrl-cluster gmap-ui-floating" onClick={(e) => e.stopPropagation()}>
               {/* Layers Switcher Menu */}
-              {showLayerMenu && (
-                <div className="gmap-popup-menu layers-menu">
+              <Presence show={showLayerMenu} exitMs={170}>
+                {(st) => (
+                <div
+                  className="gmap-popup-menu layers-menu motion-pop"
+                  data-state={st}
+                  style={{ '--origin': 'bottom right' } as CSSProperties}
+                >
                   <div className="menu-header flex items-center justify-between">
                     <span>Map Display Mode</span>
                     <button
@@ -589,11 +740,17 @@ export function GoogleMapView({
                     </div>
                   </button>
                 </div>
-              )}
+                )}
+              </Presence>
 
               {/* Axes Configuration Menu */}
-              {showAxesMenu && (
-                <div className="gmap-popup-menu axes-menu">
+              <Presence show={showAxesMenu} exitMs={170}>
+                {(st) => (
+                <div
+                  className="gmap-popup-menu axes-menu motion-pop"
+                  data-state={st}
+                  style={{ '--origin': 'bottom right' } as CSSProperties}
+                >
                   <div className="menu-header flex items-center justify-between">
                     <span>Configure Fit Matrix</span>
                     <button
@@ -652,7 +809,8 @@ export function GoogleMapView({
                     Reset to Default Fit Matrix
                   </button>
                 </div>
-              )}
+                )}
+              </Presence>
 
               {/* Layer Switcher Button */}
               <button
@@ -731,4 +889,4 @@ export function GoogleMapView({
       </TransformWrapper>
     </div>
   );
-}
+});

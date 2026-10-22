@@ -323,10 +323,11 @@ export function positionMarkers(
   xAxis: MapAxis,
   yAxis: MapAxis,
   width: number,
-  height: number
+  height: number,
+  maxPins = 150
 ) {
   const placed: { job: Job; x: number; y: number; px: number; py: number; trueX: number; trueY: number }[] = [];
-  const slice = data.slice(0, 150);
+  const slice = data.slice(0, maxPins);
 
   // Safe area padding to prevent markers from being placed off-screen or under toolbars
   const padLeft = 40;
@@ -350,8 +351,22 @@ export function positionMarkers(
       py = 125;
     }
 
-    for (let attempt = 0; attempt < 80; attempt++) {
-      const collidesWithPlaced = placed.some((p) => Math.hypot(p.px - px, p.py - py) < 56);
+    const MIN_DIST = 56;
+    const MIN_DIST_SQ = 3136; // 56 * 56
+
+    for (let attempt = 0; attempt < 35; attempt++) {
+      let collidesWithPlaced = false;
+      for (let i = placed.length - 1; i >= 0; i--) {
+        const p = placed[i];
+        const dx = p.px - px;
+        const dy = p.py - py;
+        if (Math.abs(dx) < MIN_DIST && Math.abs(dy) < MIN_DIST) {
+          if (dx * dx + dy * dy < MIN_DIST_SQ) {
+            collidesWithPlaced = true;
+            break;
+          }
+        }
+      }
       const inOmniboxZone = px < 460 && py < 115;
       if (!collidesWithPlaced && !inOmniboxZone) break;
 

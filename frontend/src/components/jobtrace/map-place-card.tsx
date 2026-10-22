@@ -1,4 +1,4 @@
-import { useEffect, useState, type CSSProperties } from 'react';
+import { Suspense, lazy, useEffect, useState, type CSSProperties } from 'react';
 import {
   X,
   ArrowLeft,
@@ -20,8 +20,9 @@ import {
 } from 'lucide-react';
 import { dimensions, type Job } from '@/lib/jobs';
 import { api } from '@/lib/api';
+import { formatJobDescription } from '@/lib/utils';
 import { CompanyMark } from './match-matrix';
-import { MiniRadar } from './mini-radar';
+const MiniRadar = lazy(() => import('./mini-radar').then((m) => ({ default: m.MiniRadar })));
 
 export interface MapPlaceCardProps {
   job: Job | null;
@@ -31,6 +32,7 @@ export interface MapPlaceCardProps {
   isComparing: boolean;
   onToggleCompare: (id: string) => void;
   onDiscard?: (id: string) => void;
+  state?: 'open' | 'closed';
 }
 
 export function MapPlaceCard({
@@ -41,6 +43,7 @@ export function MapPlaceCard({
   isComparing,
   onToggleCompare,
   onDiscard,
+  state = 'open',
 }: MapPlaceCardProps) {
   const [expandedDesc, setExpandedDesc] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -140,9 +143,9 @@ export function MapPlaceCard({
       : 'Stretch / Feasibility Check';
 
   return (
-    <div className="gmap-place-card gmap-ui-floating animate-slide-right">
+    <div className="gmap-place-card gmap-ui-floating motion-card" data-state={state}>
       {/* Hero Cover Header */}
-      <div className="place-card-cover">
+      <div key={`cover-${job.id}`} className="place-card-cover animate-fade-in">
         <div className="place-cover-top-bar">
           <button
             className="place-back-btn"
@@ -243,60 +246,66 @@ export function MapPlaceCard({
         )}
       </div>
 
-      {/* Google Maps Place Action Buttons (Horizontal pill row) */}
-      <div className="place-actions-row">
-        {job.url && job.url !== '#' && (
-          <a
-            href={job.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className={`place-action-btn btn-apply ${liveness.status === 'archived' ? 'btn-archived' : ''}`}
-            title={liveness.status === 'archived' ? 'Warning: Listing appears archived on provider' : 'Open application URL in new tab'}
+      {/* Google Maps Place Action Buttons (Executive 2-tier layout) */}
+      <div className="place-actions-shell">
+        {/* Tier 1: Primary Actions (Apply + Shortlist) */}
+        <div className="place-actions-primary">
+          {job.url && job.url !== '#' && (
+            <a
+              href={job.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={`place-btn-primary ${liveness.status === 'archived' ? 'btn-archived' : ''}`}
+              title={liveness.status === 'archived' ? 'Warning: Listing appears archived on provider' : 'Open application URL in new tab'}
+            >
+              <ExternalLink size={15} />
+              <span>{liveness.status === 'archived' ? 'Archived on Provider' : `Apply on ${job.company}`}</span>
+            </a>
+          )}
+
+          <button
+            className={`place-btn-save ${saved ? 'is-saved' : ''}`}
+            onClick={() => onToggleSave(job.id)}
+            title={saved ? 'Remove from shortlist' : 'Save to shortlist'}
           >
-            <ExternalLink size={14} />
-            <span>{liveness.status === 'archived' ? 'Archived' : 'Apply'}</span>
-          </a>
-        )}
+            {saved ? <Check size={15} className="text-emerald-600" /> : <Bookmark size={15} />}
+            <span>{saved ? 'Shortlisted' : 'Save'}</span>
+          </button>
+        </div>
 
-        <button
-          className={`place-action-btn ${saved ? 'btn-saved' : ''}`}
-          onClick={() => onToggleSave(job.id)}
-          title={saved ? 'Remove from shortlist' : 'Save to shortlist'}
-        >
-          {saved ? <Check size={14} /> : <Bookmark size={14} />}
-          <span>{saved ? 'Saved' : 'Save'}</span>
-        </button>
+        {/* Tier 2: Utility Toolbar (Compare, Share, Discard) */}
+        <div className="place-actions-toolbar">
+          <button
+            className={`place-btn-tool ${isComparing ? 'is-comparing' : ''}`}
+            onClick={() => onToggleCompare(job.id)}
+            title={isComparing ? 'Remove from comparison' : 'Compare role against others'}
+          >
+            <Columns2 size={13} />
+            <span>{isComparing ? 'Comparing' : 'Compare'}</span>
+          </button>
 
-        <button
-          className={`place-action-btn ${isComparing ? 'btn-comparing' : ''}`}
-          onClick={() => onToggleCompare(job.id)}
-          title={isComparing ? 'Remove from comparison' : 'Compare role'}
-        >
-          <Columns2 size={14} />
-          <span>{isComparing ? 'Comparing' : 'Compare'}</span>
-        </button>
+          <button
+            className="place-btn-tool"
+            onClick={handleShare}
+            title="Copy link to clipboard"
+          >
+            {copied ? <CheckCircle2 size={13} className="text-emerald-500" /> : <Share2 size={13} />}
+            <span>{copied ? 'Copied Link' : 'Share'}</span>
+          </button>
 
-        <button
-          className="place-action-btn"
-          onClick={handleShare}
-          title="Copy link to clipboard"
-        >
-          {copied ? <CheckCircle2 size={14} className="text-emerald-500" /> : <Share2 size={14} />}
-          <span>{copied ? 'Copied' : 'Share'}</span>
-        </button>
-
-        <button
-          className="place-action-btn btn-discard"
-          onClick={handleDiscard}
-          disabled={discarding}
-          title="Discard closed or unwanted job from your matrix"
-        >
-          <Trash2 size={14} />
-          <span>{discarding ? '...' : 'Discard'}</span>
-        </button>
+          <button
+            className="place-btn-tool btn-discard"
+            onClick={handleDiscard}
+            disabled={discarding}
+            title="Discard closed or unwanted job from your matrix"
+          >
+            <Trash2 size={13} />
+            <span>{discarding ? 'Discarding...' : 'Discard'}</span>
+          </button>
+        </div>
       </div>
 
-      <div className="place-body-scroll">
+      <div key={`body-${job.id}`} className="place-body-scroll animate-fade-in">
         {/* Match Score Hero Card */}
         <div className="place-score-card">
           <div className="score-ring-wrap">
@@ -318,7 +327,9 @@ export function MapPlaceCard({
             <span className="section-sub">6 Strategic Vectors</span>
           </div>
           <div className="place-radar-container">
-            <MiniRadar job={job} labels={true} />
+            <Suspense fallback={<div style={{ height: 220 }} />}>
+              <MiniRadar job={job} labels={true} />
+            </Suspense>
           </div>
 
           {/* Breakdown Bars */}
@@ -376,7 +387,7 @@ export function MapPlaceCard({
           {expandedDesc && (
             <div className="desc-content animate-fade-in">
               <p className="whitespace-pre-line leading-relaxed">
-                {fullDesc || job.description}
+                {formatJobDescription(fullDesc || job.description)}
               </p>
               <div className="desc-footer">
                 <Building2 size={12} className="inline mr-1" />
