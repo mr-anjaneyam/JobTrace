@@ -1,0 +1,63 @@
+name: Bug report
+description: Something is not working as expected
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Please search existing issues first and remove any secrets (tokens, API keys, chat IDs) from logs and config snippets.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Run ...
+        2. Click ...
+        3. See error
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Scanning / ATS sources
+        - Scoring / LLM provider
+        - Telegram alerts or digest
+        - Scheduler / daemon
+        - Web dashboard
+        - Settings / resume upload
+        - Install / start scripts
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      placeholder: "main @ a1b2c3d"
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options: [Windows, macOS, Linux, Other]
+    validations:
+      required: true
+  - type: input
+    id: runtime
+    attributes:
+      label: Python and Node.js versions
+      placeholder: "Python 3.12, Node 20"
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs and config
+      description: Relevant console output and the relevant part of `config.yaml` (secrets removed).
+      render: shell

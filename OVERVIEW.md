@@ -50,7 +50,7 @@ JobTrace is designed to solve the fundamental fatigue of manual job hunting:
 
 ## 2. Core Enhancements in JobTrace
 
-| Dimension | Legacy JobRadar | JobTrace |
+| Dimension | Before | JobTrace |
 |-----------|-----------------|----------|
 | **Notification Channel** | SMTP Email / Gmail App Password | **Telegram Bot API** (real-time, rich HTML, chunked) |
 | **Filter Presence Bug** | Filtering before upsert caused false closures | **All fetched jobs upserted**; `matches_filter` flag prevents false closures |
@@ -78,8 +78,8 @@ CREATE TABLE jobs (
     first_seen REAL NOT NULL,
     last_seen REAL NOT NULL,
     closed_at REAL,
-    alerted_at REAL,
-    emailed_at REAL,
+    alerted INTEGER DEFAULT 0,
+    notified INTEGER DEFAULT 0,
     score INTEGER,
     reason TEXT,
     breakdown TEXT,

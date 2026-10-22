@@ -1,230 +1,132 @@
 # JobTrace
 
-> **Stateful career intelligence, LLM scoring, and instant Telegram alerts.**
+[![CI](https://github.com/mr-anjaneyam/JobTrace/actions/workflows/ci.yml/badge.svg)](https://github.com/mr-anjaneyam/JobTrace/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
 
-JobTrace continuously monitors company career portals, diffs postings against a local database, scores matching openings against your resume using LLMs (or offline keyword matching), and delivers instant notifications and weekly digests directly to your **Telegram** chat.
+**Self-hosted job tracker that watches company career portals, scores openings against your resume, and alerts you on Telegram.**
 
----
+JobTrace polls applicant tracking systems directly, diffs postings against a local SQLite database, scores each new opening with an LLM (or a free offline matcher), and sends you a short Telegram message when something relevant appears. A React dashboard lets you browse and search everything it found.
 
-## ⚡ What Makes JobTrace Different
+## Features
 
-- **Direct ATS Integration:** Scrapes 7 ATS platforms natively (**Greenhouse, Lever, Ashby, Workable, Workday, Oracle Recruiting Cloud, Atlassian**) plus remote aggregators (**Remotive, Arbeitnow**).
-- **Instant Telegram Bot Alerts:** Replaces clunky email/SMTP setups with high-priority markdown/HTML cards in Telegram, formatted cleanly with direct application links.
-- **Stateful Presence Tracking:** Jobs failing your initial filters are still presence-tracked, preventing false "job closed" events when filters change.
-- **Deterministic ID Normalization:** Strips UTM and analytics query parameters (`utm_source`, `lever-source`, `gh_src`, etc.) so job IDs stay stable across scans.
-- **Configurable Seniority Gate:** Tailored for *intern*, *junior*, *mid*, *senior*, or *lead* candidates. Automatically caps mismatching roles (e.g., senior director roles for a junior applicant) without consuming tokens.
-- **Multi-Dimensional Relevance:** Evaluates skills, seniority, location, domain, recency, and reach. Irrelevant roles are capped even if they match keywords.
-- **Token Economy & Budget Controls:** Supports token budgets, local triage floors (score obvious mismatches for 0 tokens), and batch scoring (up to 25 jobs per request).
-- **Unified Engine:** The CLI, background daemon, and the Web UI share the exact same orchestration pipeline.
-- **Cross-Platform:** Runs natively on **Windows** (via PowerShell `run.ps1`), **macOS** (launchd plists or bash), and **Linux**.
+- **Direct ATS integration:** Greenhouse, Lever, Ashby, Workable, Workday, Oracle Recruiting Cloud and Atlassian, plus the Remotive and Arbeitnow feeds.
+- **Telegram alerts and weekly digests:** no SMTP setup, messages are HTML-escaped and split to fit Telegram's 4096 character limit.
+- **Stateful tracking:** every fetched job is stored, so a posting that fails your filters is never reported as "closed" by mistake. Roles that disappear from a board are marked closed.
+- **Stable job IDs:** tracking parameters (`utm_*`, `gh_src`, `lever-source`, ...) are stripped before hashing.
+- **Seniority, location and relevance gates:** intern, junior, mid, senior, lead or any. Mismatched roles are capped in code, without spending tokens.
+- **Token budget controls:** batch scoring (up to 25 jobs per request), an optional free local triage, and a daily token limit.
+- **Pluggable scoring:** xkiro, OpenAI, OpenRouter, Ollama, Cursor, JEV, a built-in offline matcher, or none.
+- **Web dashboard:** opportunity map, match matrix, job detail, compare view, FTS5 full-text search, live scan progress over Server-Sent Events, resume upload and settings.
+- **Cross-platform:** Windows (PowerShell), macOS and Linux.
 
----
+See [OVERVIEW.md](OVERVIEW.md) for the architecture, database schema and design notes.
 
-## 🚀 Quickstart
+## Quick start
 
-### 1. Requirements & Setup
-
-JobTrace requires **Python 3.10+**.
+Requirements: Python 3.10+ and Node.js 18+.
 
 ```bash
-# Clone the repository
-git clone https://github.com/suvamneog/jobradar.git
-cd jobradar
+git clone https://github.com/mr-anjaneyam/JobTrace.git
+cd JobTrace
 
-# Install dependencies
+# Backend
 pip install -r requirements.txt
-```
 
-### 2. Configure Telegram & Preferences
+# Frontend
+cd frontend && npm install && cd ..
 
-Copy the configuration template:
-```bash
+# Local config (both files are git-ignored)
 cp config.example.yaml config.yaml
+cp .env.example .env
 ```
 
-Set up your Telegram Bot:
-1. Open Telegram and search for [@BotFather](https://t.me/BotFather).
-2. Send `/newbot`, name your bot (e.g. `MyJobTraceBot`), and copy your **Bot Token**.
-3. Open a chat with your new bot and click **Start**.
-4. Retrieve your Telegram **Chat ID** (via [@userinfobot](https://t.me/userinfobot) or visit `https://api.telegram.org/bot<YOUR_BOT_TOKEN>/getUpdates`).
-5. Add your token and chat ID to `config.yaml`:
+`./install.sh` does the same on macOS and Linux, inside a virtualenv.
 
-```yaml
-telegram:
-  bot_token: "123456789:ABCdefGHIjklMNOpqrsTUVwxyz"
-  chat_id: "987654321"
-```
+Start the backend and the dashboard together:
 
-Verify your Telegram connection:
-```bash
-# Windows
-.\run.ps1 test
-
-# macOS / Linux
-python3 -m jobtrace.main test
-```
-*You will immediately receive a test greeting message from JobTrace in Telegram!*
-
-### 3. Add Your Resume
-
-You can add your resume in either of two ways:
-- **Directly in the Web UI (Recommended):** Click **Upload Resume** or drag & drop your PDF or TXT resume onto the Candidate Profile card in the web dashboard.
-- **Via configuration:** Place your resume in the project root (e.g. `resume.pdf`) and reference it in `config.yaml` (`resume_path: resume.pdf`).
-
----
-
-## ⚙️ Admin Settings & In-UI Configuration
-
-Everything in JobTrace can be managed directly through the Web UI via the **⚙️ Admin Settings** modal:
-- **Telegram Bot Configuration:** Set Bot Token and configure **multiple** recipient user/chat IDs with instant in-browser **Send Test Ping** verification.
-- **AI Engine & API Keys:** Select your scoring provider (Xkiro, OpenRouter, OpenAI, Cursor, Ollama), model identifier, and threshold, and securely configure API keys saved into `.env`.
-- **Candidate Preferences:** Adjust target seniority bands and preferred locations live.
-- **Resume Management:** Upload and parse new resumes on the fly.
-
----
-
-## 🛠️ CLI Commands
-
-JobTrace comes with a comprehensive CLI:
-
-```bash
-# Fetch and score all configured sources
-python -m jobtrace.main scan
-
-# Send same-day alerts for watched shortlist companies to Telegram
-python -m jobtrace.main alert
-python -m jobtrace.main alert --dry-run
-
-# Send weekly digest of top matches to Telegram
-python -m jobtrace.main digest
-python -m jobtrace.main digest --dry-run
-
-# Run full scan followed by weekly digest
-python -m jobtrace.main run
-
-# Re-apply seniority and relevance gates to existing database (0 tokens)
-python -m jobtrace.main recap
-
-# Inspect recent openings directly in your terminal
-python -m jobtrace.main list --days 7
-
-# Launch the real-time Web Dashboard (http://localhost:8765)
-python -m jobtrace.main web
-
-# Run cross-platform background scheduler daemon
-python -m jobtrace.main daemon
-```
-
-On Windows, use the included PowerShell script:
 ```powershell
-.\run.ps1 scan
-.\run.ps1 alert
-.\run.ps1 web
+# Windows
+.\start.ps1        # or start.bat
+```
+```bash
+# macOS / Linux
+./start.sh
 ```
 
----
+Then open <http://localhost:3000>. The API listens on <http://127.0.0.1:8000> (interactive docs at `/docs`). `stop.ps1` / `stop.sh` shut everything down.
 
-## 🖥️ Live Web Dashboard
+## Configuration
 
-Launch the web UI to browse jobs, run live scans, and search job descriptions with SQLite FTS5:
+1. **Telegram:** create a bot with [@BotFather](https://t.me/BotFather), message it once, then find your chat ID via [@userinfobot](https://t.me/userinfobot). Enter both in the dashboard under Settings, or set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` in `.env`. Multiple chat IDs are supported.
+2. **Resume:** upload a PDF, DOCX, TXT or MD file in the dashboard (Candidate Profile), or set `resume_path` in `config.yaml`.
+3. **Scoring provider:** set `llm.provider` in `config.yaml` and the matching key in `.env` (see [.env.example](.env.example)). Use `local` for free offline matching or `none` to skip scoring.
+4. **Companies and filters:** edit `companies`, `filters`, `candidate` and `alerts` in `config.yaml`. [config.example.yaml](config.example.yaml) documents every option.
+
+Secrets live only in `.env` and `config.yaml`, both ignored by git. The settings API never returns full secrets, only a masked tail.
+
+### Performance on low-end machines
+
+The dashboard switches to a lite mode automatically on devices with 4 or fewer CPU cores, 4 GB or less memory, or reduced-motion enabled. Lite mode drops shadows, animations, the background grid and quadrant tints, and shows up to 80 map pins instead of 150. Force a mode from the browser console and reload:
+
+```js
+localStorage.setItem('jobtrace.perf', 'lite');   // or 'full'; removeItem to go back to auto
+```
+
+## Command line
+
+Run from the `backend/` directory (Windows users can use `.\run.ps1 <command>` from the repo root):
 
 ```bash
-python -m jobtrace.main web --port 8765
+python -m jobtrace.main scan             # fetch, diff and score
+python -m jobtrace.main alert            # Telegram alert for watched companies
+python -m jobtrace.main digest           # weekly digest
+python -m jobtrace.main run              # scan + digest
+python -m jobtrace.main recap            # re-apply seniority/relevance caps (0 tokens)
+python -m jobtrace.main list --days 7    # recent openings in the terminal
+python -m jobtrace.main test             # verify Telegram credentials
+python -m jobtrace.main web --port 8000  # API server only
+python -m jobtrace.main daemon           # built-in scheduler
 ```
 
-Navigate to `http://localhost:8765`:
-- **Real-Time Scan Streaming:** Watch jobs get fetched, diffed, and scored via Server-Sent Events (SSE).
-- **Full-Text Search (FTS5):** Search across titles, companies, locations, and descriptions.
-- **Score Breakdown:** View radar breakdowns for skills, seniority, domain, location, and reach.
+`alert` and `digest` accept `--dry-run` to preview without sending.
 
----
+### Scheduling
 
-## ⏰ Automated Scheduling
+`daemon` runs a daily alert pass at 09:30 and a weekly digest (scan first) on Mondays at 09:00, catching up if it starts late. You can also schedule `alert` and `run` with cron, Task Scheduler or systemd timers.
 
-### Option A: Built-in Background Daemon (Cross-Platform)
-Run JobTrace as a persistent background process on any OS:
+### Network exposure
+
+The API binds to `127.0.0.1` by default and has no authentication. Set `JOBTRACE_HOST` only if you understand the risk, and never expose it to the internet without a reverse proxy that adds authentication. The dev server started by `start.ps1` / `start.sh` listens on all interfaces; remove `--host 0.0.0.0` there if you do not want other devices on your network to reach the dashboard.
+
+## Development
+
 ```bash
-python -m jobtrace.main daemon
-```
-This checks daily alerts at 09:30 and dispatches weekly digests on Mondays at 09:00.
-
-### Option B: macOS launchd
-Install system agents for automatic runs:
-```bash
-sed "s|__DIR__|$(pwd)|g" com.jobtrace.daily.plist > ~/Library/LaunchAgents/com.jobtrace.daily.plist
-sed "s|__DIR__|$(pwd)|g" com.jobtrace.weekly.plist > ~/Library/LaunchAgents/com.jobtrace.weekly.plist
-launchctl load ~/Library/LaunchAgents/com.jobtrace.daily.plist
-launchctl load ~/Library/LaunchAgents/com.jobtrace.weekly.plist
+pip install -r backend/requirements-dev.txt
+cd backend && python -m pytest          # backend tests (use a temporary project root)
+cd frontend && npx tsc --noEmit         # type-check
+cd frontend && npm run build            # production build
 ```
 
----
-
-## 🧠 LLM Scoring Backends
-
-JobTrace supports multiple scoring providers in `config.yaml`:
-- **xkiro / OpenAI-compatible:** (`xkiro`, `openai`, `openrouter`)
-- **Ollama:** Offline local inference
-- **Cursor Cloud Agents:** Cloud agent execution
-- **TypeSafe / JEV:** System One architecture
-- **Local:** Built-in offline keyword, location, and seniority matcher (zero API keys required!)
-
----
-
-## 🧪 Testing
-
-Run the full automated test suite:
-```bash
-python -m unittest discover tests
 ```
-Or run individual test modules:
-```bash
-python tests/test_store.py
-python tests/test_telegram.py
-python tests/test_sources.py
-python tests/test_seniority.py
-python tests/test_pipeline.py
+JobTrace/
+├── backend/
+│   ├── jobtrace/        # Python package: pipeline, sources, store, scoring, Telegram, scheduler
+│   │   └── web/         # FastAPI server
+│   └── tests/           # pytest suite
+├── frontend/            # React 19 + Vite + Tailwind dashboard
+├── config.example.yaml  # configuration template
+├── .env.example         # secrets template
+├── start.* / stop.*     # full-stack launchers (PowerShell, bash, batch)
+└── run.ps1              # Windows CLI wrapper
 ```
 
----
+## Contributing
 
-## 📁 Project Structure
+Bug reports, feature ideas and pull requests are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) and the [Code of Conduct](CODE_OF_CONDUCT.md) first. Report security issues privately as described in [SECURITY.md](SECURITY.md).
 
-```
-jobtrace/
-├── jobtrace/                  # Core Python Package
-│   ├── __init__.py
-│   ├── main.py               # CLI dispatcher & subcommands
-│   ├── pipeline.py           # Unified scan & score pipeline
-│   ├── telegram.py           # Telegram Bot alert & digest dispatcher
-│   ├── store.py              # SQLite store with FTS5 and presence tracking
-│   ├── sources.py            # 7 ATS adapters & aggregators
-│   ├── seniority.py          # Configurable seniority gate
-│   ├── relevance.py          # Relevance scoring gate
-│   ├── resume.py             # Resume parser & profile extractor
-│   ├── budget.py             # Daily token economy & limits
-│   ├── scheduler.py          # Cross-platform background runner
-│   ├── batch.py              # Prompt batching & response salvage
-│   ├── localmatch.py         # Offline matcher (0 tokens)
-│   ├── llm.py                # LLM client abstractions
-│   ├── cursor.py             # Cursor agent scoring
-│   ├── jev.py                # TypeSafe JEV scoring
-│   └── web/                  # FastAPI Web Dashboard & static assets
-│       ├── server.py
-│       └── static/
-│           ├── index.html
-│           ├── app.js
-│           └── styles.css
-├── tests/                    # Unit test suite
-├── config.example.yaml       # Configuration template
-├── requirements.txt          # Python dependencies
-├── run.ps1                   # Windows runner
-├── run.example.sh            # Linux / macOS runner
-├── run-web.sh                # Web server launcher
-└── com.jobtrace.*.plist      # macOS service descriptors
-```
+Good first contributions: a new ATS adapter in `backend/jobtrace/sources.py`, a new scoring provider in `backend/jobtrace/llm.py`, or more tests.
 
----
+## License
 
-## 📄 License
-
-MIT License. See [LICENSE](LICENSE) for details.
+MIT. See [LICENSE](LICENSE).

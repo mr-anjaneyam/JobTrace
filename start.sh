@@ -1,6 +1,6 @@
 #!/bin/bash
 # ==============================================================================
-# JobTrace — Single Full Stack Startup Script (Bash)
+# JobTrace: Single Full Stack Startup Script (Bash)
 # Starts Backend (FastAPI) and Frontend (React/Vite) concurrently with IP display
 # ==============================================================================
 set -e
@@ -30,16 +30,15 @@ fi
 # 2. Display Startup Banner
 echo ""
 echo "========================================================================"
-echo "                  JobTrace — Full Stack Application                     "
+echo "                  JobTrace: Full Stack Application                     "
 echo "========================================================================"
 echo ""
 echo "  [Frontend Dashboard]"
 echo "    ➜  Local:    http://localhost:$FRONTEND_PORT"
 echo "    ➜  Network:  http://${NETWORK_IP}:$FRONTEND_PORT"
 echo ""
-echo "  [Backend API & Radar Engine]"
+echo "  [Backend API & JobTrace Engine]"
 echo "    ➜  Local:    http://127.0.0.1:$BACKEND_PORT"
-echo "    ➜  Network:  http://${NETWORK_IP}:$BACKEND_PORT"
 echo "    ➜  Swagger:  http://127.0.0.1:$BACKEND_PORT/docs"
 echo ""
 echo "========================================================================"

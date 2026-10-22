@@ -54,8 +54,6 @@ Write-Host ''
 Write-Host '  [Backend API Engine]' -ForegroundColor White
 Write-Host '    -> Local:    ' -NoNewline -ForegroundColor DarkGray
 Write-Host ('http://127.0.0.1:' + $BackendPort) -ForegroundColor Yellow
-Write-Host '    -> Network:  ' -NoNewline -ForegroundColor DarkGray
-Write-Host ('http://' + $networkIp + ':' + $BackendPort) -ForegroundColor Green
 Write-Host '    -> Swagger:  ' -NoNewline -ForegroundColor DarkGray
 Write-Host ('http://127.0.0.1:' + $BackendPort + '/docs') -ForegroundColor Cyan
 Write-Host ''

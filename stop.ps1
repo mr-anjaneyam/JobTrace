@@ -44,7 +44,7 @@ try {
             # Check command line if accessible
             $wmi = Get-CimInstance Win32_Process -Filter ("ProcessId = " + $proc.Id) -ErrorAction SilentlyContinue
             $cmd = if ($wmi -and $wmi.CommandLine) { $wmi.CommandLine } else { '' }
-            if ($cmd -match 'jobtrace' -or $cmd -match 'vite' -or $cmd -match 'jobradar') {
+            if ($cmd -match 'jobtrace' -or $cmd -match 'vite') {
                 Write-Host ('  Terminating orphan process: ' + $proc.ProcessName + ' (PID: ' + $proc.Id + ')...') -ForegroundColor DarkYellow
                 Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
             }
