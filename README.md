@@ -1,81 +1,175 @@
-<h1 align="center">
-  <!-- Assets: frontend/public/logo.svg (full) and logo-mark.svg (icon only) -->
-  <img src="frontend/public/logo.svg" alt="JobTrace" width="200">
-</h1>
+<div align="center">
+
+<!-- Assets: frontend/public/logo.svg (full) and logo-mark.svg (icon only) -->
+<img src="frontend/public/logo.svg" alt="JobTrace" width="220">
+
+### Your job search, minus the 47 open tabs.
+
+**A self-hosted tracker that watches company career pages, scores every opening against your resume, and pings you on Telegram only when something is worth your time.**
 
 [![CI](https://github.com/mr-anjaneyam/JobTrace/actions/workflows/ci.yml/badge.svg)](https://github.com/mr-anjaneyam/JobTrace/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
+[![Release](https://img.shields.io/github/v/release/mr-anjaneyam/JobTrace?include_prereleases&color=0A6BFF)](https://github.com/mr-anjaneyam/JobTrace/releases)
+[![License: MIT](https://img.shields.io/badge/license-MIT-0A6BFF.svg)](LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-08294A.svg)](https://www.python.org/)
+[![Docker ready](https://img.shields.io/badge/docker-compose%20up-00A88E.svg)](#-quick-start)
+[![GitHub stars](https://img.shields.io/github/stars/mr-anjaneyam/JobTrace?style=flat&color=00A88E)](https://github.com/mr-anjaneyam/JobTrace/stargazers)
 
-**Self-hosted job tracker that watches company career portals, scores openings against your resume, and alerts you on Telegram.**
+[Quick start](#-quick-start) &nbsp;•&nbsp; [Features](#-what-it-does) &nbsp;•&nbsp; [How it works](#-how-it-works) &nbsp;•&nbsp; [Configure](#-configuration) &nbsp;•&nbsp; [FAQ](#-faq) &nbsp;•&nbsp; [Contribute](#-contributing)
 
-JobTrace polls applicant tracking systems directly, diffs postings against a local SQLite database, scores each new opening with an LLM (or a free offline matcher), and sends you a short Telegram message when something relevant appears. A React dashboard lets you browse and search everything it found.
+</div>
 
-<!-- DEMO: overwrite docs/screenshots/demo.gif (20 to 30 seconds, under 10 MB). Show onboarding, the map filling in, a place card, and a Telegram alert. -->
 <p align="center">
-  <img src="docs/screenshots/demo.gif" alt="JobTrace demo" width="860">
+  <a href="docs/vid/desktop_demo.mp4"><img src="docs/vid/desktop_demo.webp" alt="JobTrace demo: onboarding, the opportunity map filling in, and a job card" width="860"></a>
+  <br>
+  <sub>▶ <a href="docs/vid/desktop_demo.mp4">Watch it in full quality (28 s)</a></sub>
 </p>
 
-## Screenshots
+## 🤔 Why this exists
 
-<!-- Overwrite the files in docs/screenshots/ keeping the same names; no README edits needed. -->
+Job hunting has a boring core: open the same career pages, squint at the same titles, close the ones that want 8 years of experience for an "entry-level" role, repeat tomorrow. F5 is not a job-search strategy.
+
+JobTrace is the friend who does the refreshing for you. It reads the postings straight from the source, remembers what it has already seen, judges each new role against your resume, and texts you only when something clears the bar. Your resume stays on your machine, and so does your data.
+
+## 🖼️ Screenshots
+
+<p align="center">
+  <img src="docs/screenshots/desktop_dashboard.png" alt="The opportunity map: every open role placed by fit" width="900">
+  <br>
+  <sub><b>Opportunity map</b>: every role placed by fit, so the good ones float to the top-right</sub>
+</p>
+
 <table>
   <tr>
-    <td width="50%"><img src="docs/screenshots/dashboard-map.png" alt="Opportunity map"><br><sub><b>Opportunity map</b>: every role placed by fit</sub></td>
-    <td width="50%"><img src="docs/screenshots/place-card.png" alt="Job detail card"><br><sub><b>Job detail</b>: score breakdown and live status</sub></td>
-  </tr>
-  <tr>
-    <td width="50%"><img src="docs/screenshots/onboarding.png" alt="Onboarding"><br><sub><b>Onboarding</b>: set up in about two minutes</sub></td>
-    <td width="50%"><img src="docs/screenshots/explore-drawer.png" alt="Explore drawer"><br><sub><b>Explore</b>: search, sort and compare</sub></td>
-  </tr>
-  <tr>
-    <td colspan="2" align="center"><img src="docs/screenshots/telegram-alert.png" alt="Telegram alert" height="420"><br><sub><b>Telegram alerts</b> for strong new matches</sub></td>
+    <td width="62%" valign="top" align="center"><img src="docs/screenshots/desktop_onboarding.png" alt="Onboarding welcome screen"><br><sub><b>Onboarding</b>: two minutes, no config files, no tears</sub></td>
+    <td width="38%" valign="top" align="center"><img src="docs/screenshots/desktop_jobcard.png" alt="Job card with score breakdown"><br><sub><b>Job card</b>: score breakdown and a live check that the posting still exists</sub></td>
   </tr>
 </table>
 
-## Features
+<p align="center">
+  <img src="docs/screenshots/telegram-alert.png" alt="Telegram alert listing three matching roles with scores" width="420">
+  <br>
+  <sub><b>Telegram alerts</b>: a buzz in your pocket, not another inbox</sub>
+</p>
 
-- **Direct ATS integration:** Greenhouse, Lever, Ashby, Workable, Workday, Oracle Recruiting Cloud and Atlassian, plus the Remotive and Arbeitnow feeds.
-- **Telegram alerts and weekly digests:** no SMTP setup, messages are HTML-escaped and split to fit Telegram's 4096 character limit.
-- **Stateful tracking:** every fetched job is stored, so a posting that fails your filters is never reported as "closed" by mistake. Roles that disappear from a board are marked closed.
-- **Stable job IDs:** tracking parameters (`utm_*`, `gh_src`, `lever-source`, ...) are stripped before hashing.
-- **Seniority, location and relevance gates:** intern, junior, mid, senior, lead or any. Mismatched roles are capped in code, without spending tokens.
-- **Token budget controls:** batch scoring (up to 25 jobs per request), an optional free local triage, and a daily token limit.
-- **Pluggable scoring:** xkiro, OpenAI, OpenRouter, Ollama, Cursor, JEV, a built-in offline matcher, or none.
-- **Web dashboard:** opportunity map, match matrix, job detail, compare view, FTS5 full-text search, live scan progress over Server-Sent Events, resume upload and settings.
-- **Cross-platform:** Windows (PowerShell), macOS and Linux.
+## 📱 On your phone
 
-See [OVERVIEW.md](OVERVIEW.md) for the architecture, database schema and design notes.
+The dashboard and onboarding are responsive. Below 768 px the place card and explore drawer become full-width sheets, the map moves with drag and pinch, and onboarding collapses to a single column. Job hunting from the sofa is now a supported use case.
 
-## Quick start
+<table align="center">
+  <tr>
+    <td align="center"><a href="docs/vid/mobile_demo.mp4"><img src="docs/vid/mobile_demo.webp" alt="JobTrace on a phone, in motion" width="200"></a><br><sub><b>In motion</b> (<a href="docs/vid/mobile_demo.mp4">full video</a>)</sub></td>
+    <td align="center"><img src="docs/screenshots/mobile_dashboard.png" alt="Mobile opportunity map" width="200"><br><sub><b>Map</b></sub></td>
+    <td align="center"><img src="docs/screenshots/mobile_jobcard.png" alt="Mobile job card" width="200"><br><sub><b>Job card</b></sub></td>
+    <td align="center"><img src="docs/screenshots/mobile_onboarding.png" alt="Mobile onboarding" width="200"><br><sub><b>Onboarding</b></sub></td>
+  </tr>
+</table>
+
+> [!TIP]
+> To open it on your phone, reach your machine over a private tunnel or VPN such as Tailscale or Cloudflare Access. The API has no authentication of its own, so do not publish the port directly.
+
+## ✨ What it does
+
+| | Feature | The short version |
+|---|---|---|
+| 🔌 | **Direct ATS integration** | Greenhouse, Lever, Ashby, Workable, Workday, Oracle Recruiting Cloud and Atlassian, plus the Remotive and Arbeitnow feeds. No job-board middlemen. |
+| 💬 | **Telegram alerts and digests** | No SMTP, no app passwords. Long digests are split to fit Telegram's message limit and all text is HTML-escaped. |
+| 🧠 | **Stateful tracking** | Every fetched job is stored, even ones your filters reject, so changing a filter never fakes a "closed" role. Roles that vanish from a board are marked closed. |
+| 🪪 | **Stable job IDs** | Tracking junk (`utm_*`, `gh_src`, `lever-source`...) is stripped before hashing. A job does not become "new" because marketing added a query string. |
+| 🎚️ | **Seniority, location and relevance gates** | Intern to lead, or any. A "Director of Everything" is capped in plain code no matter how excited the model is, and it costs zero tokens. |
+| 💸 | **Token budget controls** | Batched scoring (up to 25 jobs per request), an optional free local triage, and a daily token limit, so a scan never eats your API credits. |
+| 🔁 | **Pluggable scoring** | xkiro, OpenAI, OpenRouter, Ollama, Cursor, JEV, a built-in offline matcher (no key, no cloud), or none at all. |
+| 🗺️ | **A dashboard you will actually open** | Opportunity map, match matrix, compare view, FTS5 full-text search, live scan progress, resume upload and settings. |
+| 🧭 | **Guided first run** | A step-by-step onboarding, then a progress bar while it does the first scan. It tells you to come back later, and means it. |
+| 🖥️ | **Runs anywhere** | Docker Compose, or from source on Windows, macOS and Linux. |
+
+## 🧩 How it works
+
+```mermaid
+flowchart LR
+    A["Career portals<br/>Greenhouse, Lever, Ashby,<br/>Workable, Workday, Oracle,<br/>Atlassian + remote feeds"] --> B["Fetch and normalize<br/>stable IDs"]
+    B --> C[("SQLite + FTS5<br/>presence tracking")]
+    C --> D["Gates in code<br/>seniority / location / relevance"]
+    D --> E["Scoring<br/>LLM or offline matcher<br/>under a token budget"]
+    E --> F["Telegram<br/>alerts and weekly digest"]
+    E --> G["Dashboard<br/>map, search, compare"]
+```
+
+Deeper dive: [OVERVIEW.md](OVERVIEW.md) covers the schema and design notes.
+
+## 🚀 Quick start
 
 ### Option A: Docker (recommended)
 
-Requires Docker with Compose v2.
+> [!NOTE]
+> Needs Docker with Compose v2. That is the whole prerequisites list.
 
 ```bash
-git clone https://github.com/mr-anjaneyam/JobTrace.git
-cd JobTrace
+curl -fsSLO https://github.com/mr-anjaneyam/JobTrace/releases/latest/download/docker-compose.yml
 docker compose up -d
 ```
 
-Open <http://localhost:8000>. A short onboarding asks for your name and resume, what you are looking for, and optionally your Telegram bot and an LLM key, then scans in the background. Come back in a few minutes.
+(On Windows PowerShell use `curl.exe`.) That pulls the prebuilt image from GitHub Container Registry. No clone, no build, no Node or Python on your machine. Images are published for `amd64` and `arm64`, so a Raspberry Pi or an Apple Silicon Mac is fine.
 
-What runs: a `web` container (UI and API) and a `scheduler` container (daily alerts at 09:30, weekly digest on Mondays at 09:00). They share one named volume, `jobtrace-data`, which holds the database, `config.yaml`, `.env` and your resume.
+Prefer a single container? The UI and first scan work on their own; add the scheduler later for daily alerts:
+
+```bash
+docker run -d --name jobtrace -p 127.0.0.1:8000:8000 -v jobtrace-data:/data ghcr.io/mr-anjaneyam/jobtrace:latest
+```
+
+Open <http://localhost:8000>. The onboarding asks for your name and resume, what you are looking for, and optionally a Telegram bot and an LLM key. Then it scans in the background. Go make tea; come back in a few minutes.
+
+Two containers run: `web` (UI and API) and `scheduler` (daily alerts at 09:30, weekly digest on Mondays at 09:00). They share one named volume, `jobtrace-data`, which holds the database, `config.yaml`, your resume and, once you save secrets, `.env`.
+
+<details>
+<summary><b>Everyday Docker commands</b></summary>
 
 | Task | Command |
 |---|---|
 | Logs | `docker compose logs -f` |
-| Stop | `docker compose down` (data is kept) |
-| Update | `git pull && docker compose up -d --build` |
+| Stop (data is kept) | `docker compose down` |
+| Update | Download the newest `docker-compose.yml` from the releases page, then `docker compose up -d` |
+| Pin a version | `JOBTRACE_VERSION=1.2.0 docker compose up -d` |
+| Which version am I on? | open `/api/version` |
 | Different port | `JOBTRACE_PORT=9000 docker compose up -d` |
-| Local timezone for the scheduler | `TZ=Asia/Kolkata docker compose up -d` |
+| Scheduler in your timezone | `TZ=Asia/Kolkata docker compose up -d` |
 | Back up data | `docker run --rm -v jobtrace_jobtrace-data:/data -v "$PWD":/backup alpine tar czf /backup/jobtrace-data.tgz -C /data .` |
 | Erase everything | `docker compose down -v` |
 
-The port is published on `127.0.0.1` only because the API has no authentication.
+</details>
 
-**Ollama:** containers reach Ollama on the host through `host.docker.internal` (set automatically via `OLLAMA_BASE_URL`, and `extra_hosts` handles Linux). On Linux, start Ollama with `OLLAMA_HOST=0.0.0.0` so it listens beyond loopback. For Ollama on another machine, run `OLLAMA_BASE_URL=http://that-host:11434 docker compose up -d`.
+<details>
+<summary><b>Image tags</b></summary>
+
+Each release publishes `ghcr.io/mr-anjaneyam/jobtrace` with the tags `1.4.2`, `1.4`, `1` and `latest`. Pre-releases (such as `1.5.0-rc.1`) get only their own tag. Pin an exact version if you like your upgrades deliberate.
+
+</details>
+
+<details>
+<summary><b>Building the image yourself (contributors)</b></summary>
+
+```bash
+git clone https://github.com/mr-anjaneyam/JobTrace.git
+cd JobTrace
+docker compose up -d --build
+```
+
+The compose file in the repo root builds from your checkout; the one attached to each release uses the published image.
+
+</details>
+
+<details>
+<summary><b>Using Ollama with Docker</b></summary>
+
+Containers reach Ollama on the host through `host.docker.internal`. That is set automatically through `OLLAMA_BASE_URL`, and `extra_hosts` covers Linux. On Linux, start Ollama with `OLLAMA_HOST=0.0.0.0` so it listens beyond loopback. For Ollama on another machine:
+
+```bash
+OLLAMA_BASE_URL=http://that-host:11434 docker compose up -d
+```
+
+</details>
+
+> [!WARNING]
+> The web port is published on `127.0.0.1` only, on purpose: the API has no authentication. Please do not "fix" that without something like a reverse proxy with auth in front.
 
 ### Option B: Run from source
 
@@ -85,50 +179,60 @@ Requirements: Python 3.10+ and Node.js 18+.
 git clone https://github.com/mr-anjaneyam/JobTrace.git
 cd JobTrace
 
-# Backend
-pip install -r requirements.txt
-
-# Frontend
-cd frontend && npm install && cd ..
-```
-
-`config.yaml` and `.env` are created for you on first run (both are git-ignored). `./install.sh` does the whole setup on macOS and Linux, inside a virtualenv.
-
-Start the backend and the dashboard together:
-
-```powershell
 # Windows
 .\start.ps1        # or start.bat
-```
-```bash
+
 # macOS / Linux
 ./start.sh
 ```
 
-Then open <http://localhost:3000> and follow the onboarding. The API listens on <http://127.0.0.1:8000> (interactive docs at `/docs`). `stop.ps1` / `stop.sh` shut everything down. To run onboarding again later, open `/welcome`.
+The start scripts check your Python version, install any missing backend and frontend dependencies, and launch both servers. Then open <http://localhost:3000> and follow the onboarding. The API listens on <http://127.0.0.1:8000> (interactive docs at `/docs`). Stop everything with `stop.ps1` or `stop.sh`.
 
-## Configuration
+`config.yaml` is created for you on first run, and `.env` appears when you save your first secret. Prefer a virtualenv? `./install.sh` sets one up (macOS and Linux). To run the onboarding again, open `/welcome`.
 
-Onboarding covers all of this; the details below are for editing it later (Settings in the dashboard, or the files directly).
+## 🔧 Configuration
 
-1. **Telegram:** create a bot with [@BotFather](https://t.me/BotFather), message it once, then find your chat ID via [@userinfobot](https://t.me/userinfobot). Enter both in the dashboard under Settings, or set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` in `.env`. Multiple chat IDs are supported.
-2. **Resume:** upload a PDF, DOCX, TXT or MD file in the dashboard (Candidate Profile), or set `resume_path` in `config.yaml`.
-3. **Scoring provider:** set `llm.provider` in `config.yaml` and the matching key in `.env` (see [.env.example](.env.example)). Use `local` for free offline matching or `none` to skip scoring.
+The onboarding covers all of this. The details below are for tinkering later, in Settings or in the files directly.
+
+1. **Telegram:** create a bot with [@BotFather](https://t.me/BotFather) and message it once. In the onboarding, "Detect my chat" finds your chat ID for you; otherwise use [@userinfobot](https://t.me/userinfobot). Or set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` in `.env`. Multiple chat IDs work too.
+2. **Resume:** upload a PDF, DOCX, TXT or MD file (Candidate Profile), or set `resume_path` in `config.yaml`.
+3. **Scoring provider:** set `llm.provider` in `config.yaml` and the matching key in `.env` (see [.env.example](.env.example)). `local` is free offline matching; `none` skips scoring.
 4. **Companies and filters:** edit `companies`, `filters`, `candidate` and `alerts` in `config.yaml`. [config.example.yaml](config.example.yaml) documents every option.
 
-Secrets live only in `.env` and `config.yaml`, both ignored by git. The settings API never returns full secrets, only a masked tail.
+Secrets live only in `.env` and `config.yaml`, both git-ignored. The settings API returns a masked tail, never the full secret.
 
-### Performance on low-end machines
+<details>
+<summary><b>Environment variables</b></summary>
 
-The dashboard switches to a lite mode automatically on devices with 4 or fewer CPU cores, 4 GB or less memory, or reduced-motion enabled. Lite mode drops shadows, animations, the background grid and quadrant tints, and shows up to 80 map pins instead of 150. Force a mode from the browser console and reload:
+| Variable | Default | Purpose |
+|---|---|---|
+| `JOBTRACE_HOME` | repo root | Folder holding `config.yaml`, `.env`, the database and your resume (`/data` in Docker) |
+| `JOBTRACE_HOST` | `127.0.0.1` | Interface the API binds to (`0.0.0.0` inside the container) |
+| `JOBTRACE_RELOAD` | unset | Set to `1` for auto-reload while developing the backend |
+| `JOBTRACE_PORT` | `8000` | Published port in `docker-compose.yml` |
+| `OLLAMA_BASE_URL` | `http://localhost:11434` | Where the `ollama` provider connects (`host.docker.internal` in Docker) |
 
-```js
-localStorage.setItem('jobtrace.perf', 'lite');   // or 'full'; removeItem to go back to auto
-```
+</details>
 
-## Command line
+## 🪶 How heavy is it?
 
-Run from the `backend/` directory (Windows users can use `.\run.ps1 <command>` from the repo root):
+Measured in Docker with the defaults (13 portals plus discovery, about 5.7k jobs):
+
+| State | CPU | RAM |
+|---|---|---|
+| Web, idle | about 0% | 42 MB |
+| Scheduler, idle | about 0% | 24 MB |
+| During a scan | up to one core | about 275 MB peak |
+| After the first scan | about 0% | about 200 MB web, 96 MB scheduler |
+
+A routine rescan takes about a minute and a half, most of it waiting on career sites. One small VPS is plenty: 1 vCPU and 1 GB leaves room to breathe.
+
+## 🛠️ Command line
+
+Run from the `backend/` directory. Windows users can use `.\run.ps1 <command>` from the repo root.
+
+<details open>
+<summary><b>All commands</b></summary>
 
 ```bash
 python -m jobtrace.main scan             # fetch, diff and score
@@ -145,33 +249,56 @@ python -m jobtrace.main daemon           # built-in scheduler
 
 `alert` and `digest` accept `--dry-run` to preview without sending.
 
-### Scheduling
+</details>
 
-`daemon` runs a daily alert pass at 09:30 and a weekly digest (scan first) on Mondays at 09:00, catching up if it starts late. You can also schedule `alert` and `run` with cron, Task Scheduler or systemd timers.
+**Scheduling.** `daemon` runs a daily alert pass at 09:30 and a weekly digest (scan first) on Mondays at 09:00, catching up if it starts late. In Docker the `scheduler` container does this for you, and politely waits until onboarding is finished. Prefer cron, Task Scheduler or systemd timers? Schedule `alert` and `run`.
 
-### Environment variables
+**Large databases.** Each scan deletes listings that closed more than `storage.retention_days` ago (default 90, `0` keeps everything), and `prune` does the same on demand while compacting the file. The dashboard loads at most the 4000 best-scored open roles, gzip-compressed, from an indexed query, so it stays quick as history grows. Search still covers everything.
 
-| Variable | Default | Purpose |
-|---|---|---|
-| `JOBTRACE_HOME` | repo root | Folder holding `config.yaml`, `.env`, the database and your resume (`/data` in Docker) |
-| `JOBTRACE_HOST` | `127.0.0.1` | Interface the API binds to (`0.0.0.0` inside the container) |
-| `JOBTRACE_RELOAD` | unset | Set to `1` for auto-reload while developing the backend |
-| `JOBTRACE_PORT` | `8000` | Published port in `docker-compose.yml` |
-| `OLLAMA_BASE_URL` | `http://localhost:11434` | Where the `ollama` provider connects (`host.docker.internal` in Docker) |
+**Low-end machines.** The dashboard switches to a lite mode on devices with 4 or fewer CPU cores, 4 GB or less memory, or reduced motion enabled: no shadows, no background grid, and 80 map pins instead of 150. Force it from the browser console and reload:
 
-### Large databases
+```js
+localStorage.setItem('jobtrace.perf', 'lite');   // or 'full'; removeItem to go back to auto
+```
 
-Each scan deletes listings that closed more than `storage.retention_days` ago (default 90, `0` keeps everything), and `python -m jobtrace.main prune` does the same on demand and also compacts the file. The dashboard loads at most the 4000 best-scored open roles, compressed with gzip, from an indexed query, so it stays fast as the history grows. Search (FTS5) still covers everything in the database.
+> [!IMPORTANT]
+> The dev server started by `start.ps1` and `start.sh` listens on all interfaces on purpose, so you can reach the dashboard through a tunnel. Put authentication in front of it (Cloudflare Access works nicely) before it meets the wider internet.
 
-### Network exposure
+## 🙋 FAQ
 
-The API binds to `127.0.0.1` by default and has no authentication. Set `JOBTRACE_HOST` only if you understand the risk, and never expose it to the internet without a reverse proxy that adds authentication. The dev server started by `start.ps1` / `start.sh` listens on all interfaces on purpose, so you can reach the dashboard through a tunnel; put authentication in front of it (for example Cloudflare Access) before exposing it beyond your own network.
+<details>
+<summary><b>Is reading career pages allowed?</b></summary>
 
-## Development
+JobTrace uses the public job-board endpoints that employers publish for their own embedded career sites. It does not log in or bypass anything, and it fetches politely at low volume. You are still responsible for following each site's terms.
+
+</details>
+
+<details>
+<summary><b>Does my resume leave my machine?</b></summary>
+
+Only if you pick a hosted LLM provider, and then only the profile and the job text needed for scoring. With the offline matcher or Ollama it stays home.
+
+</details>
+
+<details>
+<summary><b>Why Telegram and not email?</b></summary>
+
+Because "enable less secure apps" is not a sentence anyone wants to type in 2026. A bot token takes a minute and delivers instantly. Other channels are welcome as pull requests.
+
+</details>
+
+<details>
+<summary><b>The LLM scored a role 0. Is it broken?</b></summary>
+
+Probably not. Location and seniority gates are strict on purpose: a "US only, onsite" role scores low for a candidate based elsewhere, and a 5+ years role caps low for a junior profile. Tune `candidate` and `filters`, then run `recap` to re-apply the caps for free.
+
+</details>
+
+## 🧑‍💻 Development
 
 ```bash
 pip install -r backend/requirements-dev.txt
-cd backend && python -m pytest          # backend tests (use a temporary project root)
+cd backend && python -m pytest          # backend tests (they use a temporary project root)
 cd frontend && npx tsc --noEmit         # type-check
 cd frontend && npm run build            # production build
 ```
@@ -179,10 +306,10 @@ cd frontend && npm run build            # production build
 ```
 JobTrace/
 ├── backend/
-│   ├── jobtrace/        # Python package: pipeline, sources, store, scoring, Telegram, scheduler
+│   ├── jobtrace/        # pipeline, sources, store, scoring, Telegram, scheduler
 │   │   └── web/         # FastAPI server
 │   └── tests/           # pytest suite
-├── frontend/            # React 19 + Vite + Tailwind dashboard and onboarding
+├── frontend/            # React 19 + Vite + Tailwind: dashboard and onboarding
 ├── docs/screenshots/    # README images (placeholders until you add real ones)
 ├── Dockerfile           # multi-stage image: builds the UI, serves it from the API
 ├── docker-compose.yml   # web + scheduler sharing one data volume
@@ -192,12 +319,14 @@ JobTrace/
 └── run.ps1              # Windows CLI wrapper
 ```
 
-## Contributing
+## 🤝 Contributing
 
-Bug reports, feature ideas and pull requests are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) and the [Code of Conduct](CODE_OF_CONDUCT.md) first. Report security issues privately as described in [SECURITY.md](SECURITY.md).
+Bug reports, feature ideas and pull requests are very welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) and the [Code of Conduct](CODE_OF_CONDUCT.md) first, and report security issues privately as described in [SECURITY.md](SECURITY.md).
 
-Good first contributions: a new ATS adapter in `backend/jobtrace/sources.py`, a new scoring provider in `backend/jobtrace/llm.py`, or more tests.
+Good first contributions: a new ATS adapter in `backend/jobtrace/sources.py` (it is one small function), a new scoring provider in `backend/jobtrace/llm.py`, or more tests.
 
-## License
+If JobTrace saves you even one tab refresh, a ⭐ helps other job hunters find it. It also feeds the maintainer's ego, which is a renewable resource.
+
+## 📄 License
 
 MIT. See [LICENSE](LICENSE).
