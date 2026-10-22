@@ -9,7 +9,6 @@ from __future__ import annotations
 import hashlib
 import re
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
@@ -295,32 +294,6 @@ def fetch_company(entry: dict) -> tuple[list[dict], str | None]:
         return jobs, None
     except Exception as e:
         return [], f"{type(e).__name__}: {e}"
-
-
-def fetch_all_companies(companies: list[dict], max_workers: int = 8) -> tuple[list[dict], list[str], list[str]]:
-    """Concurrently fetch all watched companies.
-    
-    Returns: (all_jobs, healthy_companies, errors)
-    """
-    all_jobs: list[dict] = []
-    healthy_companies: list[str] = []
-    errors: list[str] = []
-
-    with ThreadPoolExecutor(max_workers=max_workers) as pool:
-        future_map = {pool.submit(fetch_company, entry): entry for entry in companies}
-        for fut in as_completed(future_map):
-            entry = future_map[fut]
-            try:
-                jobs, err = fut.result()
-                if err:
-                    errors.append(f"{entry['name']}: {err}")
-                else:
-                    healthy_companies.append(entry["name"])
-                    all_jobs.extend(jobs)
-            except Exception as e:
-                errors.append(f"{entry['name']}: {type(e).__name__}: {e}")
-
-    return all_jobs, healthy_companies, errors
 
 
 # --------------------------------------------------------------------------

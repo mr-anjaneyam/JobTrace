@@ -1,5 +1,3 @@
-import time
-from contextlib import contextmanager
 
 from jobtrace import verifier
 from jobtrace.store import Store
@@ -77,13 +75,6 @@ def job(i, source="greenhouse", posted_at=None, last_seen=None):
         "id": i, "company": "Acme", "title": f"Eng {i}", "url": f"https://boards.example.com/jobs/{i}",
         "location": "Remote", "posted_at": posted_at, "source": source, "description": "", "matches_filter": True,
     }
-
-
-def test_discard_elapsed_only_hits_stale_aggregators(tmp_path):
-    s = Store(tmp_path / "t.db")
-    old = time.time() - 40 * 86400
-    s.upsert([job("old", "remotive", posted_at=old), job("new", "remotive", posted_at=time.time()), job("gh", "greenhouse", posted_at=old)])
-    assert verifier.discard_elapsed_jobs(s, max_age_days=14) == ["old"]
 
 
 def test_verify_and_discard_closes_dead_jobs(tmp_path, monkeypatch):

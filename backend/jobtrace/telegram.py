@@ -60,13 +60,6 @@ def get_chat_ids(cfg: dict) -> list[str]:
     return ids
 
 
-def get_credentials(cfg: dict) -> tuple[str, str]:
-    """Legacy helper returning (bot_token, primary_chat_id)."""
-    token = get_bot_token(cfg)
-    chat_ids = get_chat_ids(cfg)
-    return token, chat_ids[0] if chat_ids else ""
-
-
 def send_message(
     bot_token: str,
     chat_id: str,
@@ -264,6 +257,38 @@ def send_digest(
         send_chunked(bot_token, cid, msg)
 
 
+TOKEN_RE = re.compile(r"^\d{5,}:[A-Za-z0-9_-]{20,}$")
+
+
+def detect_chats(bot_token: str) -> tuple[bool, list[dict], str]:
+    """Find chats that recently messaged the bot, so users do not have to look up their chat ID."""
+    token = (bot_token or "").strip()
+    if not TOKEN_RE.match(token):
+        return False, [], "That does not look like a bot token. It should look like 123456789:ABC..."
+    try:
+        r = requests.get(f"{TELEGRAM_API_BASE}/bot{token}/getUpdates", params={"limit": 50, "timeout": 0}, timeout=15)
+    except requests.RequestException:
+        return False, [], "Could not reach Telegram. Check your internet connection."
+    if r.status_code == 401:
+        return False, [], "Telegram rejected this bot token."
+    if r.status_code != 200:
+        return False, [], f"Telegram returned HTTP {r.status_code}."
+
+    chats: dict[str, dict] = {}
+    for update in r.json().get("result", []):
+        msg = update.get("message") or update.get("edited_message") or update.get("channel_post") or {}
+        chat = msg.get("chat") or {}
+        if "id" not in chat:
+            continue
+        name = chat.get("title") or " ".join(
+            p for p in (chat.get("first_name"), chat.get("last_name")) if p
+        ) or chat.get("username") or "Unknown"
+        chats[str(chat["id"])] = {"id": str(chat["id"]), "name": name, "type": chat.get("type", "private")}
+    if not chats:
+        return True, [], "No messages found yet. Open your bot in Telegram, press Start, then try again."
+    return True, list(chats.values()), f"Found {len(chats)} chat(s)."
+
+
 def test_telegram(
     cfg: dict,
     bot_token: str | None = None,
@@ -292,7 +317,7 @@ def test_telegram(
         data = r.json()
         bot_user = data.get("result", {}).get("username", "unknown")
     except Exception as e:
-        return False, f"Network error contacting Telegram: {e}"
+        return False, f"Network error contacting Telegram: {str(e).replace(token, '***')}"
 
     # 2. Test sending message to all target chat IDs
     successes: list[str] = []

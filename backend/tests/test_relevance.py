@@ -1,6 +1,6 @@
 """The relevance gate: a wrong-field role must not ride a strong seniority
 match. Mirror of the seniority gate, which stops the opposite failure."""
-import os, sys, tempfile
+import os, sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from jobtrace.relevance import apply_cap, is_irrelevant, CAP
 

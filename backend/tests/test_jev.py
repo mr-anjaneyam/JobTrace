@@ -31,7 +31,7 @@ sdk.Score, sdk.Choice, sdk.TypeSafeClient = Score, Choice, TypeSafeClient
 sys.modules["typesafe_sdk"] = sdk
 os.environ["TYPESAFE_API_KEY"] = "test"
 
-from jobtrace.jev import JevScorer, FIT_LEVELS
+from jobtrace.jev import JevScorer
 from jobtrace.llm import make_scorer
 
 job = {"company": "Acme", "title": "Backend Engineer", "location": "Remote",

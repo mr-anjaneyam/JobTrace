@@ -119,3 +119,28 @@ if __name__ == "__main__":
     test_alert_queue_isolation()
     test_fts5_search()
     print("All store tests PASSED!")
+
+
+def test_prune_removes_only_long_closed_jobs_and_their_search_rows():
+    tmp = os.path.join(tempfile.mkdtemp(), "test_prune.db")
+    s = Store(tmp)
+    s.upsert([make_job("old", desc="python backend role"), make_job("recent"), make_job("open")])
+    now = time.time()
+    s.db.execute("UPDATE jobs SET closed_at = ? WHERE id = 'old'", (now - 200 * 86400,))
+    s.db.execute("UPDATE jobs SET closed_at = ? WHERE id = 'recent'", (now - 5 * 86400,))
+    s.db.commit()
+
+    assert s.prune(90) == 1
+    ids = {r[0] for r in s.db.execute("SELECT id FROM jobs")}
+    assert ids == {"recent", "open"}
+    assert s.search("python") == []
+    assert s.prune(0) == 0  # retention disabled
+
+
+def test_prune_vacuum_runs_without_error():
+    tmp = os.path.join(tempfile.mkdtemp(), "test_vacuum.db")
+    s = Store(tmp)
+    s.upsert([make_job("x")])
+    s.db.execute("UPDATE jobs SET closed_at = ?", (time.time() - 400 * 86400,))
+    s.db.commit()
+    assert s.prune(30, vacuum=True) == 1

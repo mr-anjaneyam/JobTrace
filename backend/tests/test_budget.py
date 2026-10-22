@@ -1,5 +1,5 @@
 """The scan must stop short of the daily cap, not discover it by hitting it."""
-import os, sqlite3, sys, tempfile, time
+import os, sqlite3, sys, tempfile
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from jobtrace.budget import Budget
 

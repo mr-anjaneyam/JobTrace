@@ -1,7 +1,6 @@
 """Chat completions client for OpenAI-compatible LLM endpoints."""
 from __future__ import annotations
 
-import json
 import os
 import re
 import threading
@@ -25,6 +24,12 @@ ENDPOINTS = {
 }
 
 
+def ollama_url() -> str:
+    """OLLAMA_BASE_URL lets containers reach Ollama on the host (for example http://host.docker.internal:11434)."""
+    base = os.environ.get("OLLAMA_BASE_URL", "").strip().rstrip("/")
+    return f"{base}/v1/chat/completions" if base else ENDPOINTS["ollama"][0]
+
+
 class LLM:
     def __init__(self, provider: str, model: str):
         self.provider = provider.lower()
@@ -32,6 +37,10 @@ class LLM:
             raise ValueError(f"Unknown provider '{provider}'. Choose from {list(ENDPOINTS.keys())}")
 
         self.url, env_var = ENDPOINTS[self.provider]
+        if self.provider == "ollama":
+            self.url = ollama_url()
+        # Local models are slow to load and answer
+        self.timeout = 180 if self.provider == "ollama" else 60
         self.model = model
         self.key = os.environ.get(env_var, "") if env_var else ""
         self._lock = threading.Lock()
@@ -73,7 +82,7 @@ class LLM:
 
         for attempt in range(retries):
             try:
-                r = requests.post(self.url, headers=headers, json=body, timeout=60)
+                r = requests.post(self.url, headers=headers, json=body, timeout=self.timeout)
             except requests.RequestException as e:
                 if attempt == retries - 1:
                     raise RuntimeError(f"{self.provider} connection failed: {e}") from e

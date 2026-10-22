@@ -7,6 +7,7 @@ Commands:
   run      scan + digest in one execution
   recap    re-apply seniority and relevance caps to existing scores (0 tokens)
   list     display recent finds in terminal
+  prune    delete long-closed listings and shrink the database
   test     verify Telegram Bot token and chat connection
   web      start local web dashboard (http://localhost:8765)
   daemon   run cross-platform background scheduler
@@ -15,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -29,13 +31,21 @@ from .relevance import apply_cap as apply_relevance_cap, apply_location_cap
 from .seniority import apply_cap as apply_seniority_cap
 from .store import Store
 
-ROOT = Path(__file__).resolve().parent.parent
-if ROOT.name == "backend" and (ROOT.parent / "config.yaml").exists():
-    ROOT = ROOT.parent
+def _default_root() -> Path:
+    home = os.environ.get("JOBTRACE_HOME")
+    if home:
+        return Path(home).expanduser().resolve()
+    root = Path(__file__).resolve().parent.parent
+    if root.name == "backend" and not (root / "config.yaml").exists():
+        root = root.parent
+    return root
 
 
-def load_dotenv(env_path: Path | None = None) -> None:
-    """Load key-value pairs from .env into os.environ if not already set."""
+ROOT = _default_root()
+
+
+def load_dotenv(env_path: Path | None = None, override: bool = False) -> None:
+    """Load key-value pairs from .env into os.environ (only unset keys unless override)."""
     path = env_path or (ROOT / ".env")
     if not path.exists():
         return
@@ -47,7 +57,10 @@ def load_dotenv(env_path: Path | None = None) -> None:
             k, v = line.split("=", 1)
             k, v = k.strip(), v.strip().strip("'\"")
             if k:
-                os.environ.setdefault(k, v)
+                if override:
+                    os.environ[k] = v
+                else:
+                    os.environ.setdefault(k, v)
     except Exception:
         pass
 
@@ -55,7 +68,23 @@ def load_dotenv(env_path: Path | None = None) -> None:
 load_dotenv()
 
 
+def ensure_config(path: Path) -> None:
+    """Create config.yaml from the example template on first run, without placeholder credentials."""
+    if path.exists():
+        return
+    candidates = (ROOT / "config.example.yaml", Path(__file__).resolve().parents[2] / "config.example.yaml")
+    template = next((p for p in candidates if p.exists()), None)
+    if template is None:
+        return
+    text = template.read_text(encoding="utf-8")
+    text = re.sub(r"(?m)^(\s*bot_token:\s*).*$", r'\1""', text)
+    text = re.sub(r"(?m)^(\s*chat_id:\s*).*$", r'\1""', text)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+
+
 def load_config(path: Path) -> dict:
+    ensure_config(path)
     if not path.exists():
         sys.exit(f"No config file found at {path.resolve()}.\nCopy config.example.yaml to config.yaml and edit it.")
     return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
@@ -234,6 +263,18 @@ def cmd_recap(cfg: dict, store: Store, dry_run: bool = False) -> None:
     print(f"Successfully capped {len(changed)} scores. No tokens used.")
 
 
+def cmd_prune(cfg: dict, store: Store, days: int | None = None) -> None:
+    """Delete long-closed listings and shrink the database file."""
+    days = days if days is not None else int((cfg.get("storage") or {}).get("retention_days", 90))
+    if days <= 0:
+        print("Retention is disabled (retention_days is 0); nothing to prune.")
+        return
+    before = store.path.stat().st_size if store.path.exists() else 0
+    removed = store.prune(days, vacuum=True)
+    after = store.path.stat().st_size if store.path.exists() else 0
+    print(f"Removed {removed} listings closed more than {days} days ago. Database {before // 1024} KB -> {after // 1024} KB.")
+
+
 def cmd_list(store: Store, days: int = 7) -> None:
     rows = store.since(days * 86400)
     if not rows:
@@ -261,18 +302,49 @@ def cmd_web(port: int = 8000) -> None:
     uvicorn.run("jobtrace.web.server:app", host=host, port=port, log_level="info", reload=reload)
 
 
-def cmd_daemon(cfg: dict, store: Store) -> None:
+def is_set_up(cfg: dict) -> bool:
+    """False until onboarding is finished (installs that predate it count once Telegram is configured)."""
+    try:
+        if json.loads((ROOT / ".onboarding.json").read_text(encoding="utf-8")).get("completed"):
+            return True
+    except Exception:
+        pass
+    return bool(telegram.get_bot_token(cfg) and telegram.get_chat_ids(cfg))
+
+
+def cmd_daemon(cfg_path: Path, store: Store) -> None:
     from .scheduler import Scheduler
 
-    def weekly() -> None:
+    notified = {"waiting": False}
+
+    def fresh_cfg() -> dict | None:
+        # Settings saved from the web UI must apply without restarting the daemon
+        load_dotenv(override=True)
+        cfg = load_config(cfg_path)
+        if is_set_up(cfg):
+            notified["waiting"] = False
+            return cfg
+        if not notified["waiting"]:
+            print("Waiting for onboarding to finish in the web UI before running scheduled jobs.", flush=True)
+            notified["waiting"] = True
+        return None
+
+    def daily() -> bool:
+        cfg = fresh_cfg()
+        if cfg is None:
+            return False
+        cmd_alert(cfg, store)
+        return True
+
+    def weekly() -> bool:
+        cfg = fresh_cfg()
+        if cfg is None:
+            return False
         cmd_scan(cfg, store, quiet=True)
         cmd_digest(cfg, store)
+        return True
 
-    scheduler = Scheduler(
-        alert_fn=lambda: cmd_alert(cfg, store),
-        digest_fn=weekly,
-    )
-    scheduler.run_forever()
+    Scheduler(alert_fn=daily, digest_fn=weekly).run_forever()
 
 
 # ---------------------------------------------------------------------------
@@ -303,6 +375,9 @@ def main(argv=None) -> None:
     ls = sub.add_parser("list", help="List recent openings in terminal")
     ls.add_argument("--days", type=int, default=7)
 
+    pr = sub.add_parser("prune", help="Delete long-closed listings and shrink the database")
+    pr.add_argument("--days", type=int, default=None, help="Override storage.retention_days")
+
     sub.add_parser("test", help="Test Telegram Bot credentials and connection")
 
     wb = sub.add_parser("web", help="Start local web backend API")
@@ -328,12 +403,14 @@ def main(argv=None) -> None:
         cmd_recap(cfg, store, dry_run=args.dry_run)
     elif args.cmd == "list":
         cmd_list(store, days=args.days)
+    elif args.cmd == "prune":
+        cmd_prune(cfg, store, days=args.days)
     elif args.cmd == "test":
         cmd_test(cfg)
     elif args.cmd == "web":
         cmd_web(port=args.port)
     elif args.cmd == "daemon":
-        cmd_daemon(cfg, store)
+        cmd_daemon(cfg_path, store)
 
 
 if __name__ == "__main__":

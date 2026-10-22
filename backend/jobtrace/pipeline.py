@@ -383,6 +383,10 @@ def run_pipeline(
                 errors.append(f"Scoring error: {type(e).__name__}: {e}")
 
     store.log_run(len(new_jobs), closed_count, errors)
+    retention = int((cfg.get("storage") or {}).get("retention_days", 90))
+    pruned = store.prune(retention)
+    if pruned and not quiet:
+        print(f"  pruned {pruned} listings closed more than {retention} days ago", flush=True)
     elapsed = round(time.time() - started_at, 1)
     dispatch("done", scored=scored_count, elapsed=elapsed)
 

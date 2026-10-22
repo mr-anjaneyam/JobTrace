@@ -61,3 +61,24 @@ def test_failure_does_not_stop_scheduler(monkeypatch):
     s = Scheduler(alert_fn=boom, digest_fn=boom)
     s.tick()
     assert s.last_alert_date == "2026-10-19"
+
+
+def test_declined_job_is_retried_not_consumed(monkeypatch):
+    monkeypatch.setattr(sched_mod.datetime, "datetime", FakeDT)
+    FakeDT.current = datetime.datetime(2026, 10, 21, 10, 0)  # Wednesday
+    state = {"ready": False, "runs": 0}
+
+    def job():
+        if not state["ready"]:
+            return False
+        state["runs"] += 1
+        return True
+
+    s = Scheduler(alert_fn=job, digest_fn=lambda: None)
+    s.tick()
+    s.tick()
+    assert s.last_alert_date is None and state["runs"] == 0
+    state["ready"] = True
+    s.tick()
+    s.tick()
+    assert s.last_alert_date == "2026-10-21" and state["runs"] == 1

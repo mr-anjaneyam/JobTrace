@@ -6,7 +6,6 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from jobtrace import pipeline, sources
-from jobtrace.budget import Budget
 from jobtrace.store import Store
 
 

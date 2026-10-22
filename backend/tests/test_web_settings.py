@@ -129,3 +129,152 @@ def test_cors_rejects_foreign_origin(client):
     assert "access-control-allow-origin" not in r.headers
     ok = client.get("/api/settings", headers={"Origin": "http://localhost:3000"})
     assert ok.headers["access-control-allow-origin"] == "http://localhost:3000"
+
+
+# ---- onboarding ----
+
+def test_onboarding_starts_incomplete_on_fresh_install(client):
+    data = client.get("/api/onboarding/status").json()
+    assert data["completed"] is False
+    assert data["scan"]["state"] == "idle"
+
+
+def test_onboarding_treats_existing_install_as_done(client, workspace):
+    from jobtrace.store import Store
+
+    s = Store(workspace / "jobtrace.db")
+    s.upsert([{"id": "1", "company": "Acme", "title": "Eng", "url": "u", "location": "Remote",
+               "posted_at": None, "source": "greenhouse", "description": "", "matches_filter": True}])
+    assert client.get("/api/onboarding/status").json()["completed"] is True
+
+
+def test_onboarding_complete_saves_name_without_scan(client, workspace):
+    resp = client.post("/api/onboarding/complete", json={"name": "Ada Lovelace", "start_scan": False}).json()
+    assert resp["ok"] is True and resp["started"] is False
+    status = client.get("/api/onboarding/status").json()
+    assert status["completed"] is True and status["name"] == "Ada Lovelace"
+    assert (workspace / ".onboarding.json").exists()
+
+
+def test_onboarding_background_scan_reports_progress(client, monkeypatch):
+    import time
+
+    from jobtrace.web import server
+
+    def fake_pipeline(cfg, store, root, quiet=True, emit=None, **kw):
+        emit("fetch", {"company": "Acme", "count": 3})
+        emit("fetched", {"new": 3, "closed": 0, "total": 3})
+        emit("scoring", {"count": 2})
+        emit("scored", {"id": "a"})
+        return {"new": 3, "scored": 1, "errors": []}
+
+    monkeypatch.setattr(server, "run_pipeline", fake_pipeline)
+    resp = client.post("/api/onboarding/complete", json={"name": "Ada"}).json()
+    assert resp["started"] is True
+
+    for _ in range(50):
+        scan = client.get("/api/onboarding/status").json()["scan"]
+        if scan["state"] != "running":
+            break
+        time.sleep(0.05)
+    assert scan["state"] == "done" and scan["percent"] == 100 and scan["new"] == 3
+    assert server._scan_state["scanning"] is False
+
+
+def test_background_scan_skips_scoring_without_resume(client, monkeypatch, workspace):
+    import time
+
+    import yaml
+
+    from jobtrace.web import server
+
+    cfg = yaml.safe_load((workspace / "config.yaml").read_text(encoding="utf-8"))
+    cfg["llm"] = {"provider": "openai"}
+    cfg["resume_path"] = "missing.pdf"
+    (workspace / "config.yaml").write_text(yaml.safe_dump(cfg), encoding="utf-8")
+
+    seen = {}
+
+    def fake_pipeline(cfg, store, root, **kw):
+        seen["provider"] = cfg["llm"]["provider"]
+        return {"new": 0, "scored": 0, "errors": []}
+
+    monkeypatch.setattr(server, "run_pipeline", fake_pipeline)
+    client.post("/api/onboarding/complete", json={})
+    for _ in range(50):
+        scan = client.get("/api/onboarding/status").json()["scan"]
+        if scan["state"] != "running":
+            break
+        time.sleep(0.05)
+    assert seen["provider"] == "none"
+    assert "resume" in scan["note"].lower()
+
+
+def test_settings_accepts_role_keywords(client, workspace):
+    client.post("/api/settings", json={"filters": {"title_include": "Backend, Data Engineer, "}})
+    cfg = load_config(workspace / "config.yaml")
+    assert cfg["filters"]["title_include"] == ["backend", "data engineer"]
+
+
+def test_detect_chat_endpoint(client, monkeypatch):
+    from jobtrace import telegram
+
+    seen = {}
+
+    def fake_detect(token):
+        seen["token"] = token
+        return True, [{"id": "42", "name": "Ada", "type": "private"}], "Found 1 chat(s)."
+
+    monkeypatch.setattr(telegram, "detect_chats", fake_detect)
+    data = client.post("/api/telegram/detect-chat", json={"bot_token": "123456:ABCDEFGHIJKLMNOPQRSTUV"}).json()
+    assert data["ok"] and data["chats"][0]["id"] == "42"
+    assert seen["token"] == "123456:ABCDEFGHIJKLMNOPQRSTUV"
+
+
+def test_detect_chats_validates_token_and_parses_updates(monkeypatch):
+    from jobtrace import telegram
+
+    assert telegram.detect_chats("nope")[0] is False
+
+    class Resp:
+        status_code = 200
+
+        def json(self):
+            return {"result": [{"message": {"chat": {"id": 7, "first_name": "Ada", "last_name": "L", "type": "private"}}}]}
+
+    monkeypatch.setattr(telegram.requests, "get", lambda *a, **k: Resp())
+    ok, chats, _ = telegram.detect_chats("123456:ABCDEFGHIJKLMNOPQRSTUV")
+    assert ok and chats == [{"id": "7", "name": "Ada L", "type": "private"}]
+
+
+def test_state_is_capped_gzipped_and_reports_total(client, workspace, monkeypatch):
+    import gzip
+    import json
+
+    from jobtrace.store import Store
+    from jobtrace.web import server
+
+    s = Store(workspace / "jobtrace.db")
+    s.upsert([
+        {"id": f"j{i}", "company": f"C{i % 5}", "title": f"Engineer {i}", "url": "u", "location": "Remote",
+         "posted_at": None, "source": "greenhouse", "description": "x" * 300, "matches_filter": True}
+        for i in range(30)
+    ])
+    monkeypatch.setattr(server, "STATE_MAX_JOBS", 10)
+    monkeypatch.setattr(server, "_trigger_background_liveness_check", lambda: None)
+
+    raw = client.get("/api/state", headers={"Accept-Encoding": "gzip"})
+    assert raw.headers["content-encoding"] == "gzip"
+    data = json.loads(gzip.decompress(raw.content)) if raw.content[:2] == b"\x1f\x8b" else raw.json()
+    assert len(data["jobs"]) == 10
+    assert data["stats"]["open_total"] == 30
+
+    plain = client.get("/api/state", headers={"Accept-Encoding": "identity"})
+    assert "content-encoding" not in plain.headers
+    assert len(plain.json()["jobs"]) == 10
+
+
+def test_store_connection_is_reused_per_thread(workspace):
+    from jobtrace.web import server
+
+    assert server.get_store() is server.get_store()

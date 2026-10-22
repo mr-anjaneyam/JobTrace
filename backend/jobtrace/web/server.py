@@ -1,6 +1,7 @@
 """FastAPI web server for JobTrace with FTS5 search and live SSE streaming."""
 from __future__ import annotations
 
+import gzip
 import json
 import os
 import queue
@@ -13,7 +14,7 @@ from pathlib import Path
 import yaml
 from fastapi import FastAPI, File, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from .. import sources, telegram
@@ -24,7 +25,7 @@ from ..store import Store
 
 load_dotenv()
 
-FRONTEND_DIR = ROOT / "frontend"
+FRONTEND_DIR = Path(__file__).resolve().parents[3] / "frontend"
 FRONTEND_DIST = FRONTEND_DIR / "dist"
 app = FastAPI(title="JobTrace API", version="2.0.0")
 
@@ -45,6 +46,7 @@ API_KEY_NAMES = (
 )
 MASK_CHAR = "\u2022"
 MAX_RESUME_BYTES = 5 * 1024 * 1024
+STATE_MAX_JOBS = 4000
 RESUME_EXTENSIONS = (".pdf", ".txt", ".md", ".docx")
 
 
@@ -61,8 +63,6 @@ def is_masked(value: str) -> bool:
 
 if (FRONTEND_DIST / "assets").exists():
     app.mount("/assets", StaticFiles(directory=str(FRONTEND_DIST / "assets")), name="assets")
-if FRONTEND_DIR.exists():
-    app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
 
 _scan_lock = threading.Lock()
 _scan_state = {"scanning": False, "started": 0.0}
@@ -139,8 +139,18 @@ def _env_value_ok(value: str) -> bool:
     return not any(ch in value for ch in '\r\n"\\')
 
 
+_store_local = threading.local()
+
+
 def get_store() -> Store:
-    return Store(ROOT / "jobtrace.db")
+    """One connection per worker thread, instead of a new never-closed one per request."""
+    path = ROOT / "jobtrace.db"
+    cache = getattr(_store_local, "stores", None)
+    if cache is None:
+        cache = _store_local.stores = {}
+    if path not in cache:
+        cache[path] = Store(path)
+    return cache[path]
 
 
 @app.get("/")
@@ -266,6 +276,16 @@ async def update_settings(request: Request):
             if isinstance(locs, str):
                 locs = [x.strip() for x in locs.split(",") if x.strip()]
             c["candidate"]["locations"] = locs
+
+    # 3b. Role keywords used by the title filter
+    if "filters" in data:
+        roles = data["filters"].get("title_include")
+        if isinstance(roles, str):
+            roles = [x.strip() for x in roles.split(",")]
+        if isinstance(roles, list):
+            cleaned = [str(x).strip().lower() for x in roles if str(x).strip()]
+            if cleaned:
+                c.setdefault("filters", {})["title_include"] = cleaned[:30]
 
     # 4. API Keys
     if "api_keys" in data:
@@ -457,8 +477,150 @@ async def update_profile(request: Request):
     return {"ok": True, "message": "Profile confirmed and saved successfully.", "profile": data}
 
 
+@app.get("/welcome")
+def welcome_page():
+    return index()
+
+
+ONBOARDING_FILE = ".onboarding.json"
+
+_bg_lock = threading.Lock()
+_bg_scan: dict = {"state": "idle", "percent": 0, "message": "", "new": 0, "scored": 0, "errors": [], "note": ""}
+
+
+def _read_onboarding() -> dict:
+    path = ROOT / ONBOARDING_FILE
+    try:
+        return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    except Exception:
+        return {}
+
+
+def _write_onboarding(data: dict) -> None:
+    (ROOT / ONBOARDING_FILE).write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
+def _looks_configured(c: dict) -> bool:
+    """Installs that predate onboarding already hold credentials or scanned jobs."""
+    if telegram.get_bot_token(c):
+        return True
+    if (ROOT / "jobtrace.db").exists():
+        try:
+            return get_store().stats()["total"] > 0
+        except Exception:
+            return False
+    return False
+
+
+def _bg_worker() -> None:
+    cfg = get_cfg()
+    store = get_store()
+    progress = {"fetched": 0, "scoring_total": 0, "scored": 0}
+    sources_total = max(1, len(cfg.get("companies") or []) + (1 if (cfg.get("discovery") or {}).get("enabled") else 0))
+
+    resume_path = Path(cfg.get("resume_path", "resume.pdf"))
+    resume_file = resume_path if resume_path.is_absolute() else ROOT / resume_path
+    note = ""
+    llm_cfg = cfg.get("llm") or {}
+    if llm_cfg.get("provider", "none") not in ("none", "off", None, "") and not resume_file.exists():
+        cfg = {**cfg, "llm": {**llm_cfg, "provider": "none"}}
+        note = "No resume found, so roles were collected but not scored yet. Upload one in the dashboard to enable scoring."
+
+    def emit(kind: str, data: dict) -> None:
+        with _bg_lock:
+            if kind == "fetch":
+                progress["fetched"] += 1
+                _bg_scan["percent"] = min(50, round(5 + 45 * progress["fetched"] / sources_total))
+                _bg_scan["message"] = f"Reading {data.get('company', 'portal')} ({data.get('count', 0)} open roles)"
+            elif kind == "fetched":
+                _bg_scan["percent"] = 50
+                _bg_scan["new"] = data.get("new", 0)
+                _bg_scan["message"] = f"Found {data.get('total', 0)} roles that match your filters"
+            elif kind == "scoring":
+                progress["scoring_total"] = data.get("count", 0)
+                _bg_scan["message"] = f"Scoring {progress['scoring_total']} roles against your resume"
+            elif kind == "scored":
+                progress["scored"] += 1
+                _bg_scan["scored"] = progress["scored"]
+                share = min(1.0, progress["scored"] / max(1, progress["scoring_total"]))
+                _bg_scan["percent"] = 50 + round(48 * share)
+            elif kind == "throttled":
+                _bg_scan["message"] = str(data.get("message", "Scoring paused"))[:160]
+
+    try:
+        result = run_pipeline(cfg, store, ROOT, quiet=True, emit=emit)
+        with _bg_lock:
+            _bg_scan.update(
+                state="done",
+                percent=100,
+                message="All set",
+                note=note,
+                new=result.get("new", 0),
+                scored=result.get("scored", 0),
+                errors=[str(e)[:200] for e in (result.get("errors") or [])][:5],
+            )
+    except BaseException as e:  # noqa: BLE001 - surface any failure to the UI
+        with _bg_lock:
+            _bg_scan.update(state="error", message=f"{type(e).__name__}: {e}"[:200])
+    finally:
+        with _scan_lock:
+            _scan_state["scanning"] = False
+
+
+def _start_background_scan() -> bool:
+    with _scan_lock:
+        if _scan_state["scanning"]:
+            return False
+        _scan_state["scanning"] = True
+        _scan_state["started"] = time.time()
+    with _bg_lock:
+        _bg_scan.update(state="running", percent=2, message="Warming up", new=0, scored=0, errors=[], note="")
+    threading.Thread(target=_bg_worker, daemon=True).start()
+    return True
+
+
+@app.get("/api/onboarding/status")
+def onboarding_status():
+    ob = _read_onboarding()
+    if not ob.get("completed") and _looks_configured(get_cfg()):
+        ob = {**ob, "completed": True, "migrated": True}
+        _write_onboarding(ob)
+    with _bg_lock:
+        scan = dict(_bg_scan)
+    return {"completed": bool(ob.get("completed")), "name": ob.get("name", ""), "scan": scan}
+
+
+@app.post("/api/onboarding/complete")
+async def onboarding_complete(request: Request):
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    ob = _read_onboarding()
+    name = str(data.get("name", "")).strip()[:80]
+    ob.update({"completed": True, "name": name or ob.get("name", ""), "completed_at": time.time()})
+    _write_onboarding(ob)
+    started = _start_background_scan() if data.get("start_scan", True) else False
+    with _bg_lock:
+        scan = dict(_bg_scan)
+    return {"ok": True, "started": started, "scan": scan}
+
+
+@app.post("/api/telegram/detect-chat")
+async def telegram_detect_chat(request: Request):
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    token = str(data.get("bot_token", "")).strip()
+    if not token or is_masked(token):
+        token = telegram.get_bot_token(get_cfg())
+    ok, chats, message = telegram.detect_chats(token)
+    return {"ok": ok, "chats": chats, "message": message}
+
+
 @app.get("/api/state")
-def state():
+def state(request: Request):
     c, s = get_cfg(), get_store()
 
     # 1. Instantly discard elapsed/stale aggregator postings at UI open time
@@ -469,27 +631,32 @@ def state():
     # 2. Trigger asynchronous background liveness verification
     _trigger_background_liveness_check()
 
+    # Best-scored first, capped in SQL so huge databases never load every row
     rows = s.db.execute(
         """SELECT id, company, title, url, location, score, reason, domain, source,
                   breakdown, first_seen, posted_at, substr(description, 1, 350) as description, closed_at
            FROM jobs
            WHERE closed_at IS NULL AND matches_filter = 1
-           ORDER BY score DESC NULLS LAST, company, title"""
+           ORDER BY score DESC NULLS LAST, company, title
+           LIMIT ?""",
+        (STATE_MAX_JOBS,),
     ).fetchall()
+    open_total = s.db.execute("SELECT COUNT(*) FROM jobs WHERE closed_at IS NULL AND matches_filter = 1").fetchone()[0]
 
     jobs_list = [dict(r) for r in rows]
-    mosaic_jobs = _mosaic(jobs_list, limit=4000)
+    mosaic_jobs = _mosaic(jobs_list, limit=STATE_MAX_JOBS)
     scored = [j for j in mosaic_jobs if j.get("score") is not None]
     threshold = int(c.get("llm", {}).get("min_score", 6))
 
     avg_score = round(sum(j["score"] for j in scored) / len(scored), 1) if scored else 0.0
 
-    return {
+    payload = {
         "jobs": mosaic_jobs,
         "companies": [e["name"] for e in c.get("companies", [])],
         "stats": {
             "checked": len(scored),
             "total": len(mosaic_jobs),
+            "open_total": open_total,
             "closed": s.db.execute("SELECT COUNT(*) FROM jobs WHERE closed_at IS NOT NULL").fetchone()[0],
             "would_apply": len([j for j in scored if j["score"] >= threshold]),
             "avg": avg_score,
@@ -498,6 +665,12 @@ def state():
         "scanning": _scan_state["scanning"],
         "scoring": c.get("llm", {}).get("provider", "none") not in ("none", "off", None, ""),
     }
+    body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    headers = {"Vary": "Accept-Encoding"}
+    if len(body) > 2048 and "gzip" in request.headers.get("accept-encoding", ""):
+        body = gzip.compress(body, compresslevel=5)
+        headers["Content-Encoding"] = "gzip"
+    return Response(content=body, media_type="application/json", headers=headers)
 
 
 def _mosaic(jobs: list[dict], limit: int) -> list[dict]:
@@ -668,3 +841,8 @@ def scan(limit: int = 3000):
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+# Registered last so API routes win; serves the built UI plus root files such as /logo.svg
+if FRONTEND_DIST.exists():
+    app.mount("/", StaticFiles(directory=str(FRONTEND_DIST), html=True), name="spa")

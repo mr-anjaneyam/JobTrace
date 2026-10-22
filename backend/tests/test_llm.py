@@ -90,3 +90,15 @@ def test_chat_scorer_scores_batch(monkeypatch):
     res = scorer.score("profile", job)
     assert res[0] == 8
     assert scorer.tokens_used == 15
+
+
+def test_ollama_url_defaults_to_localhost(monkeypatch):
+    monkeypatch.delenv("OLLAMA_BASE_URL", raising=False)
+    assert llm.LLM("ollama", "m").url == "http://localhost:11434/v1/chat/completions"
+
+
+def test_ollama_url_follows_env_and_gets_longer_timeout(monkeypatch):
+    monkeypatch.setenv("OLLAMA_BASE_URL", "http://host.docker.internal:11434/")
+    client = llm.LLM("ollama", "m")
+    assert client.url == "http://host.docker.internal:11434/v1/chat/completions"
+    assert client.timeout > llm.LLM("openai", "m").timeout

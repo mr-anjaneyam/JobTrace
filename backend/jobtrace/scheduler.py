@@ -32,6 +32,20 @@ class Scheduler:
         self.last_alert_date: str | None = None
         self.last_digest_date: str | None = None
 
+    def _attempt(self, key: str, label: str, fn: Callable[[], object], now: datetime.datetime) -> None:
+        """Run a job; a job that returns False declined to run and is retried on the next tick."""
+        today = now.strftime("%Y-%m-%d")
+        if getattr(self, f"_announced_{key}", None) != today:
+            print(f"[{now.strftime('%H:%M:%S')}] Triggering {label}...", flush=True)
+            setattr(self, f"_announced_{key}", today)
+        try:
+            ran = fn()
+        except Exception as e:
+            print(f"Error during scheduled {label}: {e}", flush=True)
+            ran = True
+        if ran is not False:
+            setattr(self, f"last_{key}_date", today)
+
     def tick(self) -> None:
         now = datetime.datetime.now()
         today_str = now.strftime("%Y-%m-%d")
@@ -41,12 +55,7 @@ class Scheduler:
             (now.hour, now.minute) >= (self.alert_hour, self.alert_minute)
             and self.last_alert_date != today_str
         ):
-            print(f"[{now.strftime('%H:%M:%S')}] Triggering daily alert pass...", flush=True)
-            try:
-                self.alert_fn()
-            except Exception as e:
-                print(f"Error during scheduled alert: {e}", flush=True)
-            self.last_alert_date = today_str
+            self._attempt("alert", "daily alert pass", self.alert_fn, now)
 
         # 2. Weekly Digest Check (Mondays)
         if (
@@ -54,12 +63,7 @@ class Scheduler:
             and (now.hour, now.minute) >= (self.digest_hour, self.digest_minute)
             and self.last_digest_date != today_str
         ):
-            print(f"[{now.strftime('%H:%M:%S')}] Triggering weekly digest pass...", flush=True)
-            try:
-                self.digest_fn()
-            except Exception as e:
-                print(f"Error during scheduled digest: {e}", flush=True)
-            self.last_digest_date = today_str
+            self._attempt("digest", "weekly digest pass", self.digest_fn, now)
 
     def run_forever(self, interval_seconds: int = 30) -> None:
         print("JobTrace scheduler running in background. Press Ctrl+C to stop.", flush=True)

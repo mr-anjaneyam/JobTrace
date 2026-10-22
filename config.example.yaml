@@ -86,3 +86,7 @@ alerts:
 # ---- Weekly Digest ----
 digest:
   max_jobs: 40                          # Max jobs included in weekly Telegram digest
+
+# ---- Storage ----
+storage:
+  retention_days: 90                    # Delete listings closed longer ago than this after each scan (0 keeps everything)

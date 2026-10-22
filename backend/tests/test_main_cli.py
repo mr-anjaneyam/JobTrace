@@ -13,9 +13,28 @@ def test_watched_names_prefers_alert_list():
     assert main.watched_names({"companies": [{"name": "A"}, {"name": "B"}]}) == {"A", "B"}
 
 
-def test_load_config_missing_exits(tmp_path):
-    with pytest.raises(SystemExit):
-        main.load_config(tmp_path / "nope.yaml")
+def test_load_config_seeds_from_template_without_credentials(tmp_path):
+    path = tmp_path / "fresh" / "config.yaml"
+    cfg = main.load_config(path)
+    assert path.exists()
+    assert cfg["companies"]
+    assert not cfg["telegram"]["bot_token"]
+    assert not cfg["telegram"]["chat_id"]
+
+
+def test_jobtrace_home_overrides_root(monkeypatch, tmp_path):
+    monkeypatch.setenv("JOBTRACE_HOME", str(tmp_path))
+    assert main._default_root() == tmp_path.resolve()
+
+
+def test_load_dotenv_override(tmp_path, monkeypatch):
+    env = tmp_path / ".env"
+    env.write_text("OVR_JT=new\n", encoding="utf-8")
+    monkeypatch.setenv("OVR_JT", "old")
+    main.load_dotenv(env, override=True)
+    import os
+    assert os.environ["OVR_JT"] == "new"
+    monkeypatch.delenv("OVR_JT", raising=False)
 
 
 def test_load_dotenv_sets_only_missing(tmp_path, monkeypatch):
@@ -77,3 +96,16 @@ def test_bad_docx_raises(tmp_path):
     path.write_text("not a zip", encoding="utf-8")
     with pytest.raises(RuntimeError):
         resume.extract_text(path)
+
+
+def test_is_set_up_requires_onboarding_or_telegram(tmp_path, monkeypatch):
+    monkeypatch.setattr(main, "ROOT", tmp_path)
+    assert main.is_set_up({}) is False
+    (tmp_path / ".onboarding.json").write_text('{"completed": true}', encoding="utf-8")
+    assert main.is_set_up({}) is True
+
+
+def test_is_set_up_for_legacy_installs_with_telegram(tmp_path, monkeypatch):
+    monkeypatch.setattr(main, "ROOT", tmp_path)
+    cfg = {"telegram": {"bot_token": "123456:ABCDEFGHIJKLMNOPQRSTUV", "chat_ids": ["1"]}}
+    assert main.is_set_up(cfg) is True

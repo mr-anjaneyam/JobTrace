@@ -34,10 +34,6 @@ JUNIOR = (
     "intern", "internship", "junior", "jr.", "entry level", "entry-level",
     "graduate", "new grad", "associate", "trainee", "apprentice", "fresher"
 )
-SENIOR = (
-    "senior", "sr.", "staff", "principal", "lead", "head of", "director",
-    "vp ", "vice president", "chief", "architect", "manager", "distinguished"
-)
 REMOTE_KEYWORDS = ("remote", "anywhere", "work from home", "distributed", "telecommute")
 
 

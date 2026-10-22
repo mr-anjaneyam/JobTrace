@@ -34,6 +34,7 @@ CREATE INDEX IF NOT EXISTS idx_jobs_score ON jobs(score);
 CREATE INDEX IF NOT EXISTS idx_jobs_closed_at ON jobs(closed_at);
 CREATE INDEX IF NOT EXISTS idx_jobs_alerted ON jobs(alerted);
 CREATE INDEX IF NOT EXISTS idx_jobs_notified ON jobs(notified);
+CREATE INDEX IF NOT EXISTS idx_jobs_open_score ON jobs(score DESC) WHERE closed_at IS NULL AND matches_filter = 1;
 
 CREATE TABLE IF NOT EXISTS runs (
     ts            INTEGER PRIMARY KEY,
@@ -57,6 +58,8 @@ class Store:
         try:
             self.db.execute("PRAGMA journal_mode = WAL;")
             self.db.execute("PRAGMA busy_timeout = 30000;")
+            # Keeps the -wal file from staying huge after a big scan
+            self.db.execute("PRAGMA journal_size_limit = 67108864;")
         except Exception:
             pass
         self.db.executescript(SCHEMA)
@@ -188,6 +191,31 @@ class Store:
             self.db.execute("UPDATE jobs SET closed_at = ? WHERE id = ?", (run_ts, r["id"]))
         self.db.commit()
         return rows
+
+    def prune(self, retention_days: int, now: float | None = None, vacuum: bool = False) -> int:
+        """Delete listings closed more than retention_days ago (0 keeps everything). Returns rows removed."""
+        if retention_days <= 0:
+            return 0
+        cutoff = (now if now is not None else time.time()) - retention_days * 86400
+        ids = [
+            r[0]
+            for r in self.db.execute("SELECT id FROM jobs WHERE closed_at IS NOT NULL AND closed_at < ?", (cutoff,))
+        ]
+        for i in range(0, len(ids), 500):
+            chunk = ids[i : i + 500]
+            marks = ",".join("?" * len(chunk))
+            self.db.execute(f"DELETE FROM jobs WHERE id IN ({marks})", chunk)
+            if self.has_fts:
+                self.db.execute(f"DELETE FROM jobs_fts WHERE id IN ({marks})", chunk)
+        self.db.execute("DELETE FROM runs WHERE ts < ?", (int(cutoff),))
+        self.db.commit()
+        try:
+            self.db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            if vacuum and ids:
+                self.db.execute("VACUUM")
+        except sqlite3.OperationalError:
+            pass  # another connection is busy; the next prune will shrink the file
+        return len(ids)
 
     def mark_job_closed(self, job_id: str, reason: str | None = None) -> bool:
         """Mark a single job as closed and record archival reason."""

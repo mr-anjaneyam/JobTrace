@@ -114,43 +114,6 @@ def check_url_liveness(url: str, timeout: float = 4.0) -> tuple[bool, str]:
         return True, "Unchecked"
 
 
-def discard_elapsed_jobs(store: Store, max_age_days: int = 14) -> list[str]:
-    """Discard aggregator jobs whose posted_at or last_seen exceeds the maximum allowed age.
-    
-    Returns list of closed job IDs.
-    """
-    cutoff = time.time() - (max_age_days * 86400)
-    now = time.time()
-
-    # Query all open jobs from aggregators or unmonitored feeds where posted_at or last_seen is elapsed
-    rows = store.db.execute(
-        """SELECT id, company, title, posted_at, last_seen, source
-           FROM jobs
-           WHERE closed_at IS NULL
-             AND source IN ('remotive', 'arbeitnow')
-             AND (
-                 (posted_at IS NOT NULL AND posted_at < ?)
-                 OR (posted_at IS NULL AND last_seen < ?)
-             )""",
-        (cutoff, cutoff),
-    ).fetchall()
-
-    closed_ids = []
-    for r in rows:
-        jid = r["id"]
-        store.db.execute(
-            "UPDATE jobs SET closed_at = ?, reason = ? WHERE id = ?",
-            (now, f"Elapsed posting: older than {max_age_days} days", jid),
-        )
-        closed_ids.append(jid)
-
-    if closed_ids:
-        store.db.commit()
-        logger.info(f"Discarded {len(closed_ids)} elapsed jobs older than {max_age_days} days.")
-
-    return closed_ids
-
-
 def verify_and_discard_jobs(
     store: Store,
     job_ids: list[str] | None = None,

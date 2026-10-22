@@ -18,8 +18,24 @@ Write-Host "  URL:          http://127.0.0.1:$Port                    " -Foregro
 Write-Host "  Swagger Docs: http://127.0.0.1:$Port/docs               " -ForegroundColor Yellow
 Write-Host "==========================================================" -ForegroundColor Cyan
 
-if (Get-Command py -ErrorAction SilentlyContinue) {
-    py -m jobtrace.main web --port $Port
-} else {
-    python -m jobtrace.main web --port $Port
+$pyCmd = $null
+foreach ($candidate in 'py', 'python', 'python3') {
+    if (Get-Command $candidate -ErrorAction SilentlyContinue) {
+        & $candidate -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" 2>$null
+        if ($LASTEXITCODE -eq 0) { $pyCmd = $candidate; break }
+    }
 }
+if (-not $pyCmd) {
+    Write-Host 'Python 3.10 or newer was not found. Install it from https://www.python.org/downloads/' -ForegroundColor Red
+    exit 1
+}
+
+$depCheck = "import importlib.util as u, sys; need = ('fastapi', 'uvicorn', 'yaml', 'requests'); sys.exit(0 if all(u.find_spec(m) for m in need) and (u.find_spec('python_multipart') or u.find_spec('multipart')) else 1)"
+& $pyCmd -c $depCheck 2>$null
+if ($LASTEXITCODE -ne 0) {
+    Write-Host 'Installing backend dependencies first...' -ForegroundColor Cyan
+    & $pyCmd -m pip install -r (Join-Path $ScriptDir 'requirements.txt')
+    if ($LASTEXITCODE -ne 0) { exit 1 }
+}
+
+& $pyCmd -m jobtrace.main web --port $Port
