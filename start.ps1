@@ -65,8 +65,29 @@ Write-Host ''
 $backendDir = Join-Path $RootDir 'backend'
 $frontendDir = Join-Path $RootDir 'frontend'
 
-# 3. Check Python
-$pyCmd = if (Get-Command py -ErrorAction SilentlyContinue) { 'py' } else { 'python' }
+# 3. Check Python (3.10+) and backend dependencies
+$pyCmd = $null
+foreach ($candidate in 'py', 'python', 'python3') {
+    if (Get-Command $candidate -ErrorAction SilentlyContinue) {
+        & $candidate -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" 2>$null
+        if ($LASTEXITCODE -eq 0) { $pyCmd = $candidate; break }
+    }
+}
+if (-not $pyCmd) {
+    Write-Host 'Python 3.10 or newer was not found. Install it from https://www.python.org/downloads/ and run this script again.' -ForegroundColor Red
+    exit 1
+}
+
+$depCheck = "import importlib.util as u, sys; need = ('fastapi', 'uvicorn', 'yaml', 'requests'); sys.exit(0 if all(u.find_spec(m) for m in need) and (u.find_spec('python_multipart') or u.find_spec('multipart')) else 1)"
+& $pyCmd -c $depCheck 2>$null
+if ($LASTEXITCODE -ne 0) {
+    Write-Host 'Installing backend dependencies first...' -ForegroundColor Cyan
+    & $pyCmd -m pip install -r (Join-Path $backendDir 'requirements.txt')
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host 'Could not install backend dependencies. Run: pip install -r backend/requirements.txt' -ForegroundColor Red
+        exit 1
+    }
+}
 
 # 4. Check Frontend dependencies
 $reactModule = Join-Path $frontendDir 'node_modules\react'
@@ -82,7 +103,10 @@ $env:PYTHONPATH = $backendDir + ';' + $env:PYTHONPATH
 $backendArgs = '-m jobtrace.main web --port ' + $BackendPort
 $backendProcess = Start-Process -FilePath $pyCmd -ArgumentList $backendArgs -WorkingDirectory $backendDir -PassThru -NoNewWindow
 
-Start-Sleep -Milliseconds 800
+Start-Sleep -Milliseconds 1500
+if ($backendProcess.HasExited) {
+    Write-Host 'The backend failed to start (see the error above). The dashboard will not work until it is fixed.' -ForegroundColor Red
+}
 
 # 6. Run Frontend in Foreground
 try {

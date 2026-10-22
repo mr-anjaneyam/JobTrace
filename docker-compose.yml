@@ -1,0 +1,34 @@
+name: jobtrace
+
+x-jobtrace: &jobtrace
+  image: jobtrace:latest
+  build: .
+  restart: unless-stopped
+  environment:
+    TZ: ${TZ:-UTC}
+    # Ollama running on the Docker host; override if it lives elsewhere
+    OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+  volumes:
+    - jobtrace-data:/data
+
+services:
+  # Web UI and API. Open http://localhost:8000 and follow the onboarding.
+  web:
+    <<: *jobtrace
+    ports:
+      # Loopback only: the API has no authentication. Change to "8000:8000" only behind a trusted proxy.
+      - "127.0.0.1:${JOBTRACE_PORT:-8000}:8000"
+
+  # Daily alerts at 09:30 and the weekly digest on Mondays, using the same data volume.
+  scheduler:
+    <<: *jobtrace
+    command: ["python", "-m", "jobtrace.main", "daemon"]
+    healthcheck:
+      disable: true
+    depends_on:
+      - web
+
+volumes:
+  jobtrace-data:
