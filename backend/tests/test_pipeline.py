@@ -31,7 +31,7 @@ def test_unified_pipeline():
     }
 
     # Mock fetch_company
-    sources.fetch_company = lambda entry: ([
+    sources.fetch_company = lambda entry, keyword="": ([
         {
             "id": "j1",
             "company": "Acme",

@@ -15,6 +15,7 @@ Commands:
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import re
 import sys
@@ -25,11 +26,14 @@ import json
 
 import yaml
 
-from . import telegram
+from . import applog, geo, limits, telegram
 from .pipeline import ScanBusy, run_pipeline
 from .relevance import apply_cap as apply_relevance_cap, apply_location_cap
 from .seniority import apply_cap as apply_seniority_cap
 from .store import Store
+
+log = logging.getLogger("jobtrace.main")
+
 
 def _default_root() -> Path:
     home = os.environ.get("JOBTRACE_HOME")
@@ -149,7 +153,7 @@ def cmd_alert(cfg: dict, store: Store, dry_run: bool = False) -> None:
             store.mark_alerted(below_thresh_ids)
         return
 
-    cap = int(cfg.get("alerts", {}).get("max_per_alert", 15))
+    cap = limits.get(cfg, "alerts", "max_per_alert")
     to_send = qualified[:cap]
     label = time.strftime("%d %b %Y, %H:%M")
 
@@ -161,6 +165,7 @@ def cmd_alert(cfg: dict, store: Store, dry_run: bool = False) -> None:
         return
 
     telegram.send_alert(cfg, to_send, label)
+    log.info("alert sent: %d openings (%d qualified)", len(to_send), len(qualified))
     # Mark alerted only for sent jobs and scored-below-threshold jobs (unscored remain in queue)
     settled_ids = [r["id"] for r in to_send] + below_thresh_ids
     store.mark_alerted(settled_ids)
@@ -176,7 +181,7 @@ def cmd_digest(cfg: dict, store: Store, days: int = 7, dry_run: bool = False) ->
     pending = store.unnotified(min_score=min_score, require_scored=scoring_on)
     closed = store.closed_since(days * 86400)
 
-    cap = int(cfg.get("digest", {}).get("max_jobs", 35))
+    cap = limits.get(cfg, "digest", "max_jobs")
     shown_jobs = pending[:cap]
     overflow = len(pending) - len(shown_jobs)
 
@@ -198,6 +203,7 @@ def cmd_digest(cfg: dict, store: Store, days: int = 7, dry_run: bool = False) ->
         return
 
     telegram.send_digest(cfg, shown_jobs, closed, label, notes=notes)
+    log.info("digest sent: %d shown of %d matching, %d closed", len(shown_jobs), len(pending), len(closed))
     # Mark ONLY shown jobs as notified so remaining overflow rolls over to next digest
     store.mark_notified([r["id"] for r in shown_jobs])
     print(f"Telegram digest delivered: {len(shown_jobs)} shown of {len(pending)} matching, {len(closed)} closed.")
@@ -207,7 +213,7 @@ def cmd_recap(cfg: dict, store: Store, dry_run: bool = False) -> None:
     """Re-apply seniority, location, and relevance caps to existing database rows."""
     candidate_cfg = cfg.get("candidate") or {}
     target_seniority = candidate_cfg.get("seniority", "junior")
-    target_locations = candidate_cfg.get("locations") or []
+    target_locations = geo.target_locations(cfg)
 
     candidate_years = None
     cache_path = ROOT / ".resume_details.json"
@@ -265,7 +271,7 @@ def cmd_recap(cfg: dict, store: Store, dry_run: bool = False) -> None:
 
 def cmd_prune(cfg: dict, store: Store, days: int | None = None) -> None:
     """Delete long-closed listings and shrink the database file."""
-    days = days if days is not None else int((cfg.get("storage") or {}).get("retention_days", 90))
+    days = days if days is not None else limits.get(cfg, "storage", "retention_days")
     if days <= 0:
         print("Retention is disabled (retention_days is 0); nothing to prune.")
         return
@@ -321,6 +327,7 @@ def cmd_daemon(cfg_path: Path, store: Store) -> None:
         # Settings saved from the web UI must apply without restarting the daemon
         load_dotenv(override=True)
         cfg = load_config(cfg_path)
+        applog.configure(cfg, ROOT)
         if is_set_up(cfg):
             notified["waiting"] = False
             return cfg
@@ -394,6 +401,8 @@ def main(argv=None) -> None:
     args = parser.parse_args(argv)
     cfg_path = Path(args.config)
     cfg = load_config(cfg_path)
+    applog.configure(cfg, ROOT)
+    log.info("command: %s", args.cmd)
     store = Store(ROOT / "jobtrace.db")
 
     if args.cmd == "scan":

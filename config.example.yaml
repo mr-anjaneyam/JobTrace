@@ -7,8 +7,8 @@
 # Start a chat with your bot, then get your chat ID (via @userinfobot or https://api.telegram.org/bot<TOKEN>/getUpdates).
 # You can also supply TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID as environment variables.
 telegram:
-  bot_token: "123456789:ABCdefGHIjklMNOpqrsTUVwxyz"
-  chat_id: "987654321"
+  bot_token: ""                         # From @BotFather
+  chat_id: ""                           # Your chat ID from @userinfobot
 
 # ---- Candidate Profile ----
 candidate:
@@ -60,6 +60,11 @@ filters:
   title_exclude: ["staff", "principal", "director", "manager", "vp ", "vice president", "head of"]
   # Locations to accept (empty = anywhere)
   locations: []
+  # Keep only roles located in one country. Cities, states and the country name are recognised.
+  # Supported: india (also adds a list of companies that hire there). Empty = anywhere.
+  country: ""
+  # With a country set, also keep remote roles that are not tied to any country
+  include_remote: false
 
 # ---- LLM Decision Engine ----
 llm:
@@ -90,3 +95,35 @@ digest:
 # ---- Storage ----
 storage:
   retention_days: 90                    # Delete listings closed longer ago than this after each scan (0 keeps everything)
+
+# ---- Multi-Target Personas ----
+# Switch active profile dynamically or through candidate profile settings
+active_persona: backend
+personas:
+  backend:
+    title: "Backend & Systems Engineer"
+    headline: "Java, Python, Spring Boot, Microservices, Cloud"
+    target_roles: ["Backend Engineer", "Software Development Engineer", "SDE 1", "AMTS"]
+    key_skills: ["Java", "Spring Boot", "Python", "REST APIs", "Microservices", "PostgreSQL", "Docker"]
+    summary: "Software Development Engineer specializing in backend microservices and distributed workflows."
+  fullstack:
+    title: "Full Stack Engineer"
+    headline: "React, Node.js, TypeScript, Express, Tailwind"
+    target_roles: ["Full Stack Engineer", "Web Developer", "Frontend Engineer"]
+    key_skills: ["React", "TypeScript", "JavaScript", "Node.js", "Express.js", "Tailwind"]
+    summary: "Full Stack Engineer experienced in React, TypeScript, and Node.js microservices."
+  cloud_devops:
+    title: "Cloud & DevOps Engineer"
+    headline: "AWS, Docker, Kubernetes, CI/CD, GitHub Actions"
+    target_roles: ["Cloud Engineer", "DevOps Engineer", "Platform Engineer"]
+    key_skills: ["AWS", "Docker", "Kubernetes", "GitHub Actions", "Linux", "CI/CD"]
+    summary: "Cloud and DevOps enthusiast experienced in containerization and CI/CD pipelines."
+
+# ---- Logs ----
+# Written to the logs/ folder: jobtrace.log (continuous) and daily/jobtrace-YYYY-MM-DD.log (one per day).
+# Keys and tokens are removed, but request text can include your resume and job descriptions; keep the folder private.
+logging:
+  level: INFO                           # DEBUG | INFO | WARNING | ERROR
+  log_bodies: true                      # Include request and response text for job portals and AI models
+  max_body_chars: 4000                  # Longest request or response text kept per log line (0 = none)
+  retention_days: 14                    # Daily files older than this are deleted

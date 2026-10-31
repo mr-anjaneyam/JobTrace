@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import logging
 import re
 import threading
 import time
@@ -9,7 +10,9 @@ from typing import Any
 
 import requests
 
-from . import batch
+from . import applog, batch
+
+log = logging.getLogger("jobtrace.llm")
 
 
 class RateLimited(Exception):
@@ -82,7 +85,7 @@ class LLM:
 
         for attempt in range(retries):
             try:
-                r = requests.post(self.url, headers=headers, json=body, timeout=self.timeout)
+                r = applog.traced("llm", requests.post, self.url, headers=headers, json=body, timeout=self.timeout)
             except requests.RequestException as e:
                 if attempt == retries - 1:
                     raise RuntimeError(f"{self.provider} connection failed: {e}") from e
@@ -111,6 +114,10 @@ class LLM:
             usage = payload.get("usage") or {}
             self.input_tokens += usage.get("prompt_tokens", 0) or 0
             self.output_tokens += usage.get("completion_tokens", 0) or 0
+            log.info(
+                "%s model=%s tokens in=%s out=%s",
+                self.provider, self.model, usage.get("prompt_tokens", "?"), usage.get("completion_tokens", "?"),
+            )
             text = payload["choices"][0]["message"]["content"]
             # Clean reasoning/thinking artifacts if any
             return re.sub(r"<think>.*?</think>", "", text, flags=re.S).strip()
@@ -128,7 +135,7 @@ class ChatScorer:
     def score_batch(self, profile: str, jobs: list[dict]) -> dict[str, tuple[int, str, dict]]:
         if not jobs:
             return {}
-        cap = min(4000, 150 + 65 * len(jobs))
+        cap = min(4000, 250 + 150 * len(jobs))
         text = self.llm.chat(batch.build_messages(profile, jobs), max_tokens=cap)
         return batch.parse(text, jobs)
 

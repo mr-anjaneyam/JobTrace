@@ -190,6 +190,18 @@ cd JobTrace
 
 The start scripts check your Python version, install any missing backend and frontend dependencies, and launch both servers. Then open <http://localhost:3000> and follow the onboarding. The API listens on <http://127.0.0.1:8000> (interactive docs at `/docs`). Stop everything with `stop.ps1` or `stop.sh`.
 
+For a clean test run, use `--new`:
+
+```powershell
+.\start.ps1 --new       # Windows PowerShell, also works through start.bat
+```
+
+```bash
+./start.sh --new        # macOS / Linux
+```
+
+This creates a timestamped data folder under `temp/jobtrace-runs/` and sets `JOBTRACE_HOME` for that run. It starts with a fresh config, database, resume area, onboarding state and logs. Your normal `config.yaml`, `.env` and database remain untouched. The temporary run folders are ignored by git.
+
 `config.yaml` is created for you on first run, and `.env` appears when you save your first secret. Prefer a virtualenv? `./install.sh` sets one up (macOS and Linux). To run the onboarding again, open `/welcome`.
 
 ## 🔧 Configuration
@@ -198,10 +210,13 @@ The onboarding covers all of this. The details below are for tinkering later, in
 
 1. **Telegram:** create a bot with [@BotFather](https://t.me/BotFather) and message it once. In the onboarding, "Detect my chat" finds your chat ID for you; otherwise use [@userinfobot](https://t.me/userinfobot). Or set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` in `.env`. Multiple chat IDs work too.
 2. **Resume:** upload a PDF, DOCX, TXT or MD file (Candidate Profile), or set `resume_path` in `config.yaml`.
-3. **Scoring provider:** set `llm.provider` in `config.yaml` and the matching key in `.env` (see [.env.example](.env.example)). `local` is free offline matching; `none` skips scoring.
+3. **Scoring provider:** set `llm.provider` in `config.yaml` and the matching key in `.env` (see [.env.example](.env.example)). `local` is free offline matching; `none` skips scoring. The daily token limit, jobs per scan, batch size, alert caps and retention are all editable in Settings (Budget & Limits) and apply from the next scan, no restart needed.
 4. **Companies and filters:** edit `companies`, `filters`, `candidate` and `alerts` in `config.yaml`. [config.example.yaml](config.example.yaml) documents every option.
+5. **One country only:** set `filters.country: india` (or pick it in the onboarding or Settings). Only roles located there are kept, and a list of companies that hire in India is added for you. Remote roles that name no country are dropped unless you also set `filters.include_remote: true`.
 
 Secrets live only in `.env` and `config.yaml`, both git-ignored. The settings API returns a masked tail, never the full secret.
+
+**Logs.** Everything the backend does is written to the `logs/` folder (in Docker, `/data/logs` inside the volume): `jobtrace.log` is one continuous file, and `logs/daily/jobtrace-YYYY-MM-DD.log` starts fresh every day (14 days kept). Each call to a job portal or AI model is recorded with its URL, status, time taken and, by default, the request and response text. API keys and bot tokens are removed first, but requests can contain your resume and job text, so treat the folder as private. The folder is tracked in git; its contents are not. Detail, retention and body logging are editable under Settings, Logs.
 
 <details>
 <summary><b>Environment variables</b></summary>
@@ -286,6 +301,13 @@ Only if you pick a hosted LLM provider, and then only the profile and the job te
 <summary><b>Why Telegram and not email?</b></summary>
 
 Because "enable less secure apps" is not a sentence anyone wants to type in 2026. A bot token takes a minute and delivers instantly. Other channels are welcome as pull requests.
+
+</details>
+
+<details>
+<summary><b>It shows jobs from the wrong country</b></summary>
+
+Set `filters.country` (India is built in). Cities, states and the country name are recognised, so "Pune" and "Bengaluru, Karnataka" both count. Roles whose location says only "2 Locations" are kept, because JobTrace cannot prove they are elsewhere. Your old results are hidden, not deleted, and the filter applies on the next scan. Want another country? Add it to `COUNTRIES` in `backend/jobtrace/geo.py` and a company list in `presets.py`.
 
 </details>
 

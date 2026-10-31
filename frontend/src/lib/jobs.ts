@@ -21,6 +21,13 @@ export type Job = {
   url: string;
   domain?: string;
   logoUrl?: string;
+  matchedSkills?: string[];
+  missingSkills?: string[];
+  seniorityFit?: string;
+  advice?: string;
+  salaryText?: string;
+  deadlineText?: string;
+  deadlineAt?: number;
 };
 
 const BRAND_PALETTE: Array<Job['brand']> = ['ink', 'sage', 'clay', 'gold', 'lilac'];
@@ -179,29 +186,37 @@ export function transformApiJob(apiJob: ApiJob): Job {
 
   // Parse breakdown
   let breakdownVals = [normScore, normScore, 75, normScore, 80, 70];
+  let bdObj: Record<string, any> | null = null;
   if (apiJob.breakdown) {
-    let bd: Record<string, number> | null = null;
     if (typeof apiJob.breakdown === 'string') {
       try {
-        bd = JSON.parse(apiJob.breakdown);
+        bdObj = JSON.parse(apiJob.breakdown);
       } catch {
-        bd = null;
+        bdObj = null;
       }
     } else if (typeof apiJob.breakdown === 'object') {
-      bd = apiJob.breakdown as Record<string, number>;
+      bdObj = apiJob.breakdown as Record<string, any>;
     }
 
-    if (bd) {
+    if (bdObj) {
       breakdownVals = [
-        Math.min(100, Math.max(0, Math.round(bd.skills ?? normScore))),
-        Math.min(100, Math.max(0, Math.round(bd.seniority ?? normScore))),
-        Math.min(100, Math.max(0, Math.round(bd.location ?? 75))),
-        Math.min(100, Math.max(0, Math.round(bd.domain ?? normScore))),
-        Math.min(100, Math.max(0, Math.round(bd.recency ?? 80))),
-        Math.min(100, Math.max(0, Math.round(bd.reach ?? 70))),
+        Math.min(100, Math.max(0, Math.round(bdObj.skills ?? normScore))),
+        Math.min(100, Math.max(0, Math.round(bdObj.seniority ?? normScore))),
+        Math.min(100, Math.max(0, Math.round(bdObj.location ?? 75))),
+        Math.min(100, Math.max(0, Math.round(bdObj.domain ?? normScore))),
+        Math.min(100, Math.max(0, Math.round(bdObj.recency ?? 80))),
+        Math.min(100, Math.max(0, Math.round(bdObj.reach ?? 70))),
       ];
     }
   }
+
+  const matchedSkills: string[] = Array.isArray(bdObj?.matched_skills) ? bdObj!.matched_skills : [];
+  const missingSkills: string[] = Array.isArray(bdObj?.missing_skills) ? bdObj!.missing_skills : [];
+  const seniorityFit: string = bdObj?.seniority_fit || '';
+  const advice: string = bdObj?.advice || '';
+  const salaryText: string = apiJob.salary_text || bdObj?.salary_text || '';
+  const deadlineText: string = apiJob.deadline_text || bdObj?.deadline_text || '';
+  const deadlineAt: number | undefined = apiJob.deadline_at ?? bdObj?.deadline_at;
 
   // Calculate days ago
   const nowSec = Date.now() / 1000;
@@ -238,6 +253,13 @@ export function transformApiJob(apiJob: ApiJob): Job {
     url: apiJob.url || '#',
     domain,
     logoUrl,
+    matchedSkills,
+    missingSkills,
+    seniorityFit,
+    advice,
+    salaryText,
+    deadlineText,
+    deadlineAt,
   };
 }
 

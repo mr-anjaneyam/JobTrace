@@ -13,6 +13,8 @@ from typing import Any
 
 import requests
 
+from . import applog
+
 TELEGRAM_API_BASE = "https://api.telegram.org"
 MAX_MESSAGE_LENGTH = 4000
 
@@ -82,7 +84,7 @@ def send_message(
 
     for attempt in range(retries):
         try:
-            resp = requests.post(url, json=payload, timeout=25)
+            resp = applog.traced("telegram", requests.post, url, bodies=False, json=payload, timeout=25)
             if resp.status_code == 200:
                 return True
             if resp.status_code == 429:
@@ -266,7 +268,7 @@ def detect_chats(bot_token: str) -> tuple[bool, list[dict], str]:
     if not TOKEN_RE.match(token):
         return False, [], "That does not look like a bot token. It should look like 123456789:ABC..."
     try:
-        r = requests.get(f"{TELEGRAM_API_BASE}/bot{token}/getUpdates", params={"limit": 50, "timeout": 0}, timeout=15)
+        r = applog.traced("telegram", requests.get, f"{TELEGRAM_API_BASE}/bot{token}/getUpdates", bodies=False, params={"limit": 50, "timeout": 0}, timeout=15)
     except requests.RequestException:
         return False, [], "Could not reach Telegram. Check your internet connection."
     if r.status_code == 401:
@@ -311,7 +313,7 @@ def test_telegram(
 
     # 1. Test bot validity
     try:
-        r = requests.get(f"{TELEGRAM_API_BASE}/bot{token}/getMe", timeout=15)
+        r = applog.traced("telegram", requests.get, f"{TELEGRAM_API_BASE}/bot{token}/getMe", bodies=False, timeout=15)
         if r.status_code != 200:
             return False, f"Invalid bot token (HTTP {r.status_code}): {r.text}"
         data = r.json()

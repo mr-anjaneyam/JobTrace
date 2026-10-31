@@ -5,6 +5,8 @@ Requires both skills and domain sub-scores to be weak before capping.
 """
 from __future__ import annotations
 
+from . import geo
+
 SKILLS_FLOOR = 60
 DOMAIN_FLOOR = 60
 DEFAULT_CAP = 3
@@ -56,16 +58,14 @@ def apply_location_cap(
         return score, reason
 
     loc = (location_str or "").strip().lower()
-    if not loc or loc in ("n/a", "unknown", "none"):
+    if not loc or loc in ("n/a", "unknown", "none") or geo.is_unknown_location(loc):
         return score, reason
 
     remote_keywords = ("remote", "anywhere", "work from home", "distributed", "telecommute")
     if any(k in loc for k in remote_keywords):
         return score, reason
 
-    import re
-    cleaned_targets = [t.strip().lower() for t in target_locations if t.strip()]
-    if any(re.search(rf"\b{re.escape(t)}\b", loc) for t in cleaned_targets):
+    if any(geo.matches_target(t, location_str or "") for t in target_locations if t.strip()):
         return score, reason
 
     if breakdown is not None and "location" in breakdown:

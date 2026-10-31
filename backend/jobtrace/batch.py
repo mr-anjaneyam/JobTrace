@@ -8,23 +8,58 @@ from .seniority import extract_required_years
 
 KEYS = ("skills", "seniority", "location", "domain", "recency", "reach")
 
-SYSTEM_TEMPLATE = """You score job postings against a candidate's profile.
+SYSTEM_TEMPLATE = """You are a senior technical hiring partner matching software engineering roles to a candidate profile.
 
 CANDIDATE:
 {profile}
 
 For each job, output one compact array positionally:
-[ref, score, skills, seniority, location, domain, recency, reach, "reason"]
+[
+  ref,
+  score,
+  skills,
+  seniority,
+  location,
+  domain,
+  recency,
+  reach,
+  "reason",
+  ["matched_skill_1", "matched_skill_2"],
+  ["missing_skill_1", "missing_skill_2"],
+  "seniority_fit",
+  "recruiter_advice",
+  "salary_text_if_any",
+  "deadline_text_if_any"
+]
 
-- score is an integer 0-10 (10 = perfect match, 0 = completely irrelevant).
-- The six sub-scores (skills, seniority, location, domain, recency, reach) are integers 0-100.
-- reason must be at most 10 words.
-- STRICT SENIORITY & EXPERIENCE GATES:
-  * Seniority is a hard gate. If a job specifies more years of experience than the candidate has (e.g. requires 3+, 4+, 5+ yrs while candidate has < 2 yrs), score MUST NOT exceed 3/10 and the 'seniority' subscore MUST be <= 25.
-  * Level II / 2 roles (e.g. 'Software Engineer II', 'SDE 2') typically require 3-5 years. For an early-career / junior candidate, cap score at 4/10 max, NEVER 9 or 10.
-  * A 9 or 10 score is reserved ONLY for roles where the candidate meets ALL tech stack requirements AND matches or exceeds the experience level.
-- LOCATION COMPATIBILITY:
-  * If a job is strictly onsite in a location outside the candidate's target locations, score MUST NOT exceed 3/10 and the 'location' subscore MUST be <= 20. Remote roles or matching locations should be scored normally.
+- score is an integer 0-10 (10 = ideal match, 0 = completely irrelevant).
+- The six sub-scores (skills, seniority, location, domain, recency, reach) MUST BE INTEGERS 0-100.
+- reason: at most 10 words stating the genuine fit or blocker.
+- matched_skills: array of strings with top 2-5 technical skills present in both candidate and JD.
+- missing_skills: array of strings with key technical skills requested by JD that candidate does not emphasize.
+- seniority_fit: one sentence evaluating experience alignment (e.g. "Candidate has 1 yr vs 0-2 yrs required: Optimal sweet spot").
+- recruiter_advice: 1-2 actionable sentences on why to apply, which resume project (e.g. Lumen microservices, CoreTrace) to highlight, and interview focus.
+- salary_text_if_any: compensation mentioned in JD (e.g. "₹4.8–5.3 LPA", "$120k-$140k"), or empty string "" if not mentioned.
+- deadline_text_if_any: application deadline or walk-in date mentioned in JD (e.g. "31 Oct 2026"), or empty string "" if not mentioned.
+
+STRICT EVALUATION & CALIBRATION RULES:
+1. SENIORITY & EXPERIENCE MATCHING:
+   - TARGET SWEET SPOT (Eligible for 8-10/10):
+     * Roles asking for 1-3 years, 0-2 years, "fresher - 2 yrs", or early-career (SDE 1, Junior/Associate Software Engineer, AMTS).
+   - STRICT FRESHER / CAMPUS (Score MUST NOT exceed 2/10, seniority subscore <= 20):
+     * If the candidate already has full-time industry experience (~1 year), do NOT recommend roles strictly reserved for college students, campus recruitment drives, student internships, or "batch of 2024/2025 freshers only". The candidate is an active professional engineer, not a campus fresher.
+   - SENIOR / LEAD (Score MUST NOT exceed 2/10, seniority subscore <= 20):
+     * Roles requiring 3+, 4+, 5+ years experience, or titled Senior, Lead, Staff, Principal, Architect.
+   - LEVEL II / MID (Score capped at 4/10):
+     * Roles explicitly titled SDE 2 / Software Engineer II or asking for 3-5 years.
+
+2. AVOID "HAMMERING" MEDIOCRE (50%) ROLES:
+   - Do NOT give 5/10 or 6/10 to generic postings merely because they mention basic tools (Git, Linux, SQL).
+   - If the core domain or tech stack is misaligned (e.g. PHP/WordPress, Mobile iOS/Swift, Embedded C, Tech Support, SAP), score MUST be 1-3/10.
+   - A score of 7-10 is strictly reserved for genuine matches where primary stack (e.g. Java/Spring Boot, Python backend, APIs, Cloud) and experience level cleanly overlap.
+
+3. LOCATION COMPATIBILITY:
+   - If strictly onsite in an unapproved location outside candidate preferences, score MUST NOT exceed 3/10 and location subscore <= 20. Remote or matching cities scored normally.
 
 Reply with ONLY a JSON array of arrays. No markdown fence, no commentary."""
 
@@ -117,16 +152,41 @@ def _salvage(blob: str) -> list:
 
 
 def _row(item: Any, jobs: list[dict]) -> tuple | None:
+    matched_skills = []
+    missing_skills = []
+    seniority_fit = ""
+    advice = ""
+    salary_text = ""
+    deadline_text = ""
+
     if isinstance(item, dict):
         ref = item.get("ref", -1)
         score = item.get("score", 0)
         reason = item.get("reason", "")
         bd = item.get("breakdown")
+        matched_skills = item.get("matched_skills") or []
+        missing_skills = item.get("missing_skills") or []
+        seniority_fit = item.get("seniority_fit") or ""
+        advice = item.get("recruiter_advice") or item.get("advice") or ""
+        salary_text = item.get("salary_text_if_any") or item.get("salary") or ""
+        deadline_text = item.get("deadline_text_if_any") or item.get("deadline") or ""
     elif isinstance(item, (list, tuple)) and len(item) >= 2:
         ref = item[0]
         score = item[1]
         bd = item[2:8] if len(item) >= 8 else []
         reason = item[8] if len(item) > 8 else ""
+        if len(item) > 9 and isinstance(item[9], list):
+            matched_skills = [str(x) for x in item[9]]
+        if len(item) > 10 and isinstance(item[10], list):
+            missing_skills = [str(x) for x in item[10]]
+        if len(item) > 11 and item[11]:
+            seniority_fit = str(item[11])
+        if len(item) > 12 and item[12]:
+            advice = str(item[12])
+        if len(item) > 13 and item[13]:
+            salary_text = str(item[13])
+        if len(item) > 14 and item[14]:
+            deadline_text = str(item[14])
     else:
         return None
 
@@ -143,7 +203,17 @@ def _row(item: Any, jobs: list[dict]) -> tuple | None:
     except (TypeError, ValueError):
         norm_score = 0
 
-    return jobs[ref_idx]["id"], norm_score, str(reason)[:200], clean_breakdown(bd)
+    clean_bd = clean_breakdown(bd)
+    clean_bd["matched_skills"] = matched_skills
+    clean_bd["missing_skills"] = missing_skills
+    clean_bd["seniority_fit"] = seniority_fit
+    clean_bd["advice"] = advice
+    if salary_text:
+        clean_bd["salary_text"] = salary_text
+    if deadline_text:
+        clean_bd["deadline_text"] = deadline_text
+
+    return jobs[ref_idx]["id"], norm_score, str(reason)[:200], clean_bd
 
 
 def parse(text: str, jobs: list[dict]) -> dict[str, tuple[int, str, dict]]:

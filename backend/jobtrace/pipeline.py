@@ -6,6 +6,7 @@ pipeline with full budget enforcement, heuristic gates, and presence diffing.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import threading
 import time
@@ -14,7 +15,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable
 
-from . import sources
+from . import applog, geo, limits, sources
 from .budget import Budget
 from .cursor import CursorError
 from .llm import RateLimited, make_scorer
@@ -23,6 +24,8 @@ from .relevance import apply_cap as apply_relevance_cap, apply_location_cap
 from .resume import build_profile, extract_text
 from .seniority import apply_cap as apply_seniority_cap
 from .store import Store
+
+log = logging.getLogger("jobtrace.pipeline")
 
 PROFILE_CACHE_NAME = ".resume_profile.json"
 SCAN_LOCK_NAME = ".scan.lock"
@@ -82,6 +85,9 @@ def passes_filters(job: dict, filters_cfg: dict) -> bool:
         return False
     if any(s in title for s in exc):
         return False
+    country = (filters_cfg.get("country") or "").strip()
+    if country and not geo.location_in_country(job.get("location"), country, bool(filters_cfg.get("include_remote"))):
+        return False
     if locs and not any(s in where for s in locs):
         return False
     return True
@@ -117,6 +123,19 @@ def get_cached_profile(cfg: dict, scorer: Any, root_dir: Path, force: bool = Fal
         )
     except Exception:
         pass
+
+    # Enrich profile with active persona if configured
+    active_persona = cfg.get("candidate", {}).get("active_persona", "backend")
+    personas = cfg.get("candidate", {}).get("personas", {})
+    if active_persona in personas:
+        p_cfg = personas[active_persona]
+        profile += (
+            f"\n\nACTIVE TARGET PERSONA: {p_cfg.get('title', active_persona)}\n"
+            f"- Priority Roles: {', '.join(p_cfg.get('target_roles', []))}\n"
+            f"- Core Tech Focus: {', '.join(p_cfg.get('key_skills', []))}\n"
+            f"- Persona Summary: {p_cfg.get('summary', '')}"
+        )
+
     return profile
 
 
@@ -149,6 +168,7 @@ def _run_pipeline(
     max_to_score: int | None = None,
 ) -> dict:
     """Execute complete ingestion, diffing, triage, and scoring pipeline."""
+    applog.configure(cfg, root_dir)
     started_at = time.time()
     errors: list[str] = []
     new_jobs: list[dict] = []
@@ -163,13 +183,24 @@ def _run_pipeline(
     # Step 1: Ingestion
     # -----------------------------------------------------------------------
     companies = cfg.get("companies") or []
+    if not cfg.get("fetch_companies", True):
+        companies = []
     all_jobs: list[dict] = []
     healthy_companies: list[str] = []
+    log.info(
+        "scan started: %d companies, discovery=%s, country=%s, provider=%s",
+        len(companies), bool((cfg.get("discovery") or {}).get("enabled")),
+        (cfg.get("filters") or {}).get("country") or "any", (cfg.get("llm") or {}).get("provider", "none"),
+    )
 
     # Fetch companies concurrently with real-time SSE progress streaming
     workers = min(8, max(1, len(companies)))
+    country = ((cfg.get("filters") or {}).get("country") or "").strip()
+    search_word = ""
+    if country and not (cfg.get("filters") or {}).get("include_remote"):
+        search_word = geo.COUNTRY_LABELS.get(geo.normalize_country(country), country)
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        future_map = {pool.submit(sources.fetch_company, entry): entry for entry in companies}
+        future_map = {pool.submit(sources.fetch_company, entry, search_word): entry for entry in companies}
         for fut in as_completed(future_map):
             if cancel_event and cancel_event.is_set():
                 return {"cancelled": True}
@@ -180,9 +211,11 @@ def _run_pipeline(
                 jobs, err = [], str(e)
             if err:
                 errors.append(f"{entry['name']}: {err}")
+                log.warning("fetch %s (%s) failed: %s", entry["name"], entry.get("board"), err)
             else:
                 healthy_companies.append(entry["name"])
                 all_jobs.extend(jobs)
+                log.info("fetch %s (%s): %d jobs", entry["name"], entry.get("board"), len(jobs))
             dispatch("fetch", company=entry["name"], count=len(jobs), error=err or "")
             if not quiet:
                 flag = f"  ⚠ {err}" if err else ""
@@ -199,6 +232,7 @@ def _run_pipeline(
         )
         all_jobs.extend(disc_jobs)
         errors.extend(disc_errs)
+        log.info("discovery: %d jobs, %d errors", len(disc_jobs), len(disc_errs))
         dispatch("fetch", company="discovery", count=len(disc_jobs), error="")
         if not quiet:
             print(f"  {'discovery':<24} {len(disc_jobs):>4} found", flush=True)
@@ -223,6 +257,7 @@ def _run_pipeline(
     closed_count += len(stale)
 
     matching_open = [j for j in all_jobs if j.get("matches_filter")]
+    log.info("diff: %d fetched, %d match filters, %d new, %d closed", len(all_jobs), len(matching_open), len(new_jobs), closed_count)
     desc_map = {j["id"]: j.get("description", "") for j in matching_open}
     dispatch("fetched", new=len(new_jobs), closed=closed_count, total=len(matching_open))
 
@@ -233,11 +268,12 @@ def _run_pipeline(
     provider = llm_cfg.get("provider", "none")
     candidate_cfg = cfg.get("candidate") or {}
     target_seniority = candidate_cfg.get("seniority", "junior")
-    target_locations = candidate_cfg.get("locations") or filters_cfg.get("locations") or []
+    target_locations = geo.target_locations(cfg)
 
     if provider not in ("none", "off", None, ""):
-        score_limit = max_to_score or int(llm_cfg.get("max_to_score", 5000))
+        score_limit = max_to_score or limits.get(cfg, "llm", "max_to_score")
         pending_rows = store.unscored(score_limit)
+        log.info("scoring: %d jobs queued (limit %d), provider=%s model=%s", len(pending_rows), score_limit, provider, llm_cfg.get("model", ""))
         dispatch("scoring", count=len(pending_rows), backlog=store.unscored_count())
 
         if pending_rows:
@@ -279,7 +315,7 @@ def _run_pipeline(
 
             # Stage 3A: Local Triage
             rows_to_score = []
-            floor = int(llm_cfg.get("triage_floor", 3))
+            floor = limits.get(cfg, "llm", "triage_floor")
             use_triage = llm_cfg.get("triage", False) and not isinstance(scorer, LocalScorer)
 
             if use_triage:
@@ -309,9 +345,9 @@ def _run_pipeline(
                 rows_to_score = list(pending_rows)
 
             # Stage 3B: Budget Ceiling
-            budget = Budget(store.db, daily_limit=int(llm_cfg.get("daily_token_limit", 500_000)))
-            batch_size = int(llm_cfg.get("batch_size", 25))
-            per_batch = int(llm_cfg.get("tokens_per_batch", 3400))
+            budget = Budget(store.db, daily_limit=limits.get(cfg, "llm", "daily_token_limit"))
+            batch_size = limits.get(cfg, "llm", "batch_size")
+            per_batch = limits.get(cfg, "llm", "tokens_per_batch")
             affordable = max(0, budget.remaining() // per_batch) * batch_size
 
             if len(rows_to_score) > affordable:
@@ -367,6 +403,7 @@ def _run_pipeline(
                         if cancel_event and cancel_event.is_set():
                             return {"cancelled": True}
                         if not budget.can_afford(per_batch):
+                            log.warning("token budget reached: %s", budget.report())
                             dispatch("throttled", message="Daily token budget reached", scored=scored_count)
                             break
 
@@ -387,7 +424,9 @@ def _run_pipeline(
 
                         try:
                             results = scorer.score_batch(profile, payload)
+                            log.info("scored batch: %d sent, %d answered", len(chunk), len(results))
                         except (RateLimited, CursorError) as e:
+                            log.warning("scoring stopped: %s", e)
                             dispatch("throttled", message=str(e), scored=scored_count)
                             errors.append(f"Scorer rate-limited: {e}")
                             break
@@ -444,14 +483,16 @@ def _run_pipeline(
                                 dispatch("scored", id=jid, score=sc, reason=rsn, breakdown=bd)
 
             except Exception as e:
+                log.exception("scoring error")
                 errors.append(f"Scoring error: {type(e).__name__}: {e}")
 
     store.log_run(len(new_jobs), closed_count, errors)
-    retention = int((cfg.get("storage") or {}).get("retention_days", 90))
+    retention = limits.get(cfg, "storage", "retention_days")
     pruned = store.prune(retention)
     if pruned and not quiet:
         print(f"  pruned {pruned} listings closed more than {retention} days ago", flush=True)
     elapsed = round(time.time() - started_at, 1)
+    log.info("scan finished: %d new, %d closed, %d scored, %d errors in %ss", len(new_jobs), closed_count, scored_count, len(errors), elapsed)
     dispatch("done", scored=scored_count, elapsed=elapsed)
 
     if not quiet:
@@ -467,3 +508,124 @@ def _run_pipeline(
         "errors": errors,
         "elapsed": elapsed,
     }
+
+
+
+def score_single_job(job: dict, cfg: dict, store: Store, root_dir: Path) -> tuple[int, str, dict]:
+    """Score a single job with Two-Pass Architecture (Pass 1 Triage -> Pass 2 Deep Evaluation).
+
+    Persists score, salary ranges, deadline, and detailed skill breakdown in the store.
+    """
+    llm_cfg = cfg.get("llm") or {}
+    provider = llm_cfg.get("provider", "none")
+    candidate_cfg = cfg.get("candidate") or {}
+    target_seniority = candidate_cfg.get("seniority", "junior")
+    target_locations = geo.target_locations(cfg)
+
+    candidate_years = None
+    if (root_dir / ".resume_details.json").exists():
+        try:
+            c_det = json.loads((root_dir / ".resume_details.json").read_text(encoding="utf-8"))
+            candidate_years = c_det.get("years_of_experience")
+        except Exception:
+            pass
+
+    # -------------------------------------------------------------
+    # Pass 1: Fast Deterministic Triage (0 AI Tokens)
+    # -------------------------------------------------------------
+    from .localmatch import triage_job
+    triage_res = triage_job(job, candidate_years=candidate_years, target_locations=target_locations)
+    if triage_res is not None:
+        sc, rsn, bd = triage_res
+        store.save_score(job["id"], sc, rsn, bd)
+        return sc, rsn, bd
+
+    # -------------------------------------------------------------
+    # Pass 2: Deep Semantic Evaluation with LLM
+    # -------------------------------------------------------------
+    resume_path_str = cfg.get("resume_path", "resume.pdf")
+    resume_file = root_dir / resume_path_str if not Path(resume_path_str).is_absolute() else Path(resume_path_str)
+    resume_text = extract_text(resume_file) if resume_file.exists() else ""
+
+    try:
+        if provider not in ("none", "off", None, ""):
+            scorer = make_scorer(
+                provider=provider,
+                model=llm_cfg.get("model", ""),
+                params=llm_cfg.get("model_params"),
+                resume_text=resume_text,
+                target_locations=target_locations,
+                target_seniority=target_seniority,
+            )
+        else:
+            scorer = LocalScorer(
+                resume_text=resume_text,
+                target_locations=target_locations,
+                target_seniority=target_seniority,
+            )
+    except Exception as e:
+        log.warning("Scorer initialization failed (%s); falling back to LocalScorer", e)
+        scorer = LocalScorer(
+            resume_text=resume_text,
+            target_locations=target_locations,
+            target_seniority=target_seniority,
+        )
+
+    profile = get_cached_profile(cfg, scorer, root_dir)
+    score, reason, breakdown = scorer.score(profile, job)
+
+    score, reason = apply_seniority_cap(
+        score,
+        job.get("title", ""),
+        reason,
+        target_seniority=target_seniority,
+        description=job.get("description", ""),
+        candidate_years=candidate_years,
+        breakdown=breakdown,
+    )
+    score, reason = apply_location_cap(
+        score,
+        job.get("location", ""),
+        target_locations=target_locations,
+        breakdown=breakdown,
+        reason=reason,
+    )
+    score, reason = apply_relevance_cap(score, breakdown, reason)
+
+    # Enrich with salary & deadline extraction
+    from .salary import extract_salary
+    from .deadline import extract_deadline, is_deadline_elapsed
+
+    blob = f"{job.get('title', '')} {job.get('description', '')}"
+    s_min, s_max, s_curr, s_txt = extract_salary(blob)
+    d_at, d_txt = extract_deadline(blob)
+
+    if not breakdown.get("salary_text") and s_txt:
+        breakdown["salary_text"] = s_txt
+        breakdown["salary_min"] = s_min
+        breakdown["salary_max"] = s_max
+        breakdown["salary_currency"] = s_curr
+
+    if not breakdown.get("deadline_text") and d_txt:
+        breakdown["deadline_text"] = d_txt
+        breakdown["deadline_at"] = d_at
+
+    dead_timestamp = breakdown.get("deadline_at") or d_at
+    if is_deadline_elapsed(dead_timestamp):
+        close_reason = f"Application deadline elapsed ({breakdown.get('deadline_text') or d_txt})"
+        store.db.execute("UPDATE jobs SET closed_at = ?, reason = ? WHERE id = ?", (time.time(), close_reason, job["id"]))
+        store.db.commit()
+
+    store.save_score(
+        job["id"],
+        score,
+        reason,
+        breakdown,
+        salary_min=breakdown.get("salary_min") or s_min,
+        salary_max=breakdown.get("salary_max") or s_max,
+        salary_currency=breakdown.get("salary_currency") or s_curr,
+        salary_text=breakdown.get("salary_text") or s_txt,
+        deadline_at=breakdown.get("deadline_at") or d_at,
+        deadline_text=breakdown.get("deadline_text") or d_txt,
+    )
+    return score, reason, breakdown

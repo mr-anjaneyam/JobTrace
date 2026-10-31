@@ -8,6 +8,8 @@ from __future__ import annotations
 import re
 import time
 
+from . import geo
+
 VOCAB = {
     "javascript", "typescript", "python", "java", "golang", "go", "rust", "ruby",
     "php", "swift", "kotlin", "scala", "c", "c++", "c#", "sql", "bash",
@@ -75,7 +77,7 @@ class LocalScorer:
         target_seniority: str = "junior",
     ):
         self.skills = extract_skills(resume_text)
-        self.target_locations = [loc.strip().lower() for loc in (target_locations or []) if loc.strip()]
+        self.target_locations = [loc.strip() for loc in (target_locations or []) if loc.strip()]
         self.target_seniority = (target_seniority or "junior").lower()
 
     def score(self, profile: str, job: dict) -> tuple[int, str, dict]:
@@ -88,15 +90,18 @@ class LocalScorer:
         # 6 skill hits represents a high match
         skills = min(100, round(len(hits) / 6 * 100)) if self.skills else 40
 
-        from .seniority import extract_required_years, is_senior_title, is_mid_title
+        from .seniority import extract_required_years, is_senior_title, is_mid_title, is_fresher_only
 
         req_years = extract_required_years(desc, title=title)
         senior_role = is_senior_title(title)
         junior_role = any(k in title for k in JUNIOR)
         mid_role = is_mid_title(title)
 
+        fresher_role = is_fresher_only(title, desc)
         if self.target_seniority in ("intern", "junior", "entry"):
-            if req_years is not None and req_years >= 4.0:
+            if fresher_role:
+                seniority = 15
+            elif req_years is not None and req_years >= 4.0:
                 seniority = 15
             elif req_years is not None and req_years >= 3.0:
                 seniority = 25
@@ -105,7 +110,7 @@ class LocalScorer:
             elif mid_role:
                 seniority = 45
             elif junior_role:
-                seniority = 100
+                seniority = 90
             else:
                 seniority = 70
         elif self.target_seniority in ("senior", "lead", "staff"):
@@ -114,11 +119,11 @@ class LocalScorer:
             seniority = 70 if (senior_role or junior_role) else 85
 
         # Location scoring
-        is_remote = any(k in where for k in REMOTE_KEYWORDS) or not where
+        is_remote = any(k in where for k in REMOTE_KEYWORDS) or geo.is_unknown_location(where)
         if is_remote:
             location = 90
         elif self.target_locations:
-            matched_loc = any(re.search(rf"\b{re.escape(loc)}\b", where) for loc in self.target_locations)
+            matched_loc = any(geo.matches_target(loc, job.get("location") or "") for loc in self.target_locations)
             location = 100 if matched_loc else 15
         else:
             location = 75
@@ -130,14 +135,16 @@ class LocalScorer:
             days = (time.time() - posted) / 86400
             recency = 100 if days <= 7 else 80 if days <= 30 else 50 if days <= 90 else 25
 
-        domain = min(100, round(len(hits) / 4 * 100)) if hits else 30
+        domain = min(100, round(len(hits) / 4 * 100)) if len(hits) >= 2 else 0
         reach = round(skills * 0.5 + seniority * 0.35 + location * 0.15)
         blended = skills * 0.45 + seniority * 0.25 + location * 0.15 + domain * 0.15
         final_score = max(0, min(10, round(blended / 10)))
 
         # Seniority gates
         if self.target_seniority in ("intern", "junior", "entry"):
-            if req_years is not None and req_years >= 4.0:
+            if fresher_role:
+                final_score = min(final_score, 2)
+            elif req_years is not None and req_years >= 4.0:
                 final_score = min(final_score, 2)
             elif req_years is not None and req_years >= 3.0:
                 final_score = min(final_score, 3)
@@ -175,3 +182,113 @@ class LocalScorer:
             "reach": reach,
         }
         return final_score, reason[:200], breakdown
+
+
+# ---------------------------------------------------------------------------
+# Pass 1: Fast Deterministic Triage (0 AI Tokens)
+# ---------------------------------------------------------------------------
+DISQUALIFIED_NON_TECH_PATTERNS = [
+    re.compile(r"\b(?:receptionist|telecaller|telecalling|bpo|call\s*center|customer\s*support|customer\s*service)\b", re.I),
+    re.compile(r"\b(?:investigation\s+representative|insurance\s+advisor|accounting\s+apprentice|accountant)\b", re.I),
+    re.compile(r"\b(?:medical\s+officer|health\s+inspector|nurse|lab\s+technician|technician\s*\(\d+\))\b", re.I),
+    re.compile(r"\b(?:office\s+assistant|sales\s+executive|sales\s+representative|business\s+development\s+associate)\b", re.I),
+]
+
+DISQUALIFIED_TECH_PATTERNS = [
+    re.compile(r"\b(?:wordpress\s+developer|php\s+developer|drupal|magento)\b", re.I),
+    re.compile(r"\b(?:sap\s+abap|salesforce\s+admin(?:istrator)?)\b", re.I),
+]
+
+
+def triage_job(
+    job: dict,
+    candidate_years: float | None = 1.0,
+    target_locations: list[str] | None = None,
+) -> tuple[int, str, dict] | None:
+    """Pass 1: Deterministic Triage (0 AI Tokens).
+
+    Returns (score, reason, breakdown) if definitely disqualified by rule,
+    or None if the job is eligible for Pass 2 (Deep Semantic Evaluation with LLM).
+    """
+    title = (job.get("title") or "").strip()
+    desc = (job.get("description") or "").strip()
+    title_lower = title.lower()
+
+    from .seniority import extract_required_years, is_senior_title, is_fresher_only
+    from .salary import extract_salary
+    from .deadline import extract_deadline
+
+    # Parse salary and deadline if present
+    sal_min, sal_max, sal_curr, sal_text = extract_salary(f"{title} {desc}")
+    dead_at, dead_text = extract_deadline(f"{title} {desc}")
+
+    # 1. Non-technical disqualifiers (unless title also contains software/engineer/developer/analyst)
+    is_eng = any(k in title_lower for k in ("software", "developer", "engineer", "programmer", "architect", "data scientist"))
+    if not is_eng:
+        for pat in DISQUALIFIED_NON_TECH_PATTERNS:
+            if pat.search(title_lower):
+                return (
+                    1,
+                    "triage: non-technical role",
+                    {
+                        "skills": 0, "seniority": 10, "location": 100, "domain": 0, "recency": 100, "reach": 100,
+                        "matched_skills": [],
+                        "missing_skills": ["Software Engineering"],
+                        "seniority_fit": "Non-technical position",
+                        "advice": "Role does not match candidate engineering profile.",
+                        "salary_min": sal_min, "salary_max": sal_max, "salary_currency": sal_curr, "salary_text": sal_text,
+                        "deadline_at": dead_at, "deadline_text": dead_text,
+                    }
+                )
+
+    # 2. Seniority disqualifiers: 4+ years required or Principal/Director/Staff/VP
+    req_years = extract_required_years(desc, title=title_lower)
+    if is_senior_title(title_lower) or (req_years is not None and req_years >= 4.0):
+        return (
+            2,
+            f"triage: requires {req_years:g}+ yrs exp" if req_years else "triage: senior/lead title",
+            {
+                "skills": 35, "seniority": 15, "location": 100, "domain": 40, "recency": 100, "reach": 30,
+                "matched_skills": [],
+                "missing_skills": [f"{req_years:g}+ years of experience" if req_years else "Senior experience"],
+                "seniority_fit": f"Seniority gap (requires {req_years:g}+ yrs; candidate has {candidate_years or 1.0:g} yr)",
+                "advice": "Senior/Lead role requiring significantly more years of experience.",
+                "salary_min": sal_min, "salary_max": sal_max, "salary_currency": sal_curr, "salary_text": sal_text,
+                "deadline_at": dead_at, "deadline_text": dead_text,
+            }
+        )
+
+    # 3. Campus/student freshers only drive (when candidate already has full-time exp)
+    if (candidate_years is not None and candidate_years >= 0.5) and is_fresher_only(title_lower, desc):
+        return (
+            2,
+            "triage: campus/student drive only",
+            {
+                "skills": 40, "seniority": 20, "location": 100, "domain": 50, "recency": 100, "reach": 100,
+                "matched_skills": [],
+                "missing_skills": ["College student status"],
+                "seniority_fit": "Role strictly reserved for campus/student batches",
+                "advice": "Candidate is an active professional engineer, not a campus fresher.",
+                "salary_min": sal_min, "salary_max": sal_max, "salary_currency": sal_curr, "salary_text": sal_text,
+                "deadline_at": dead_at, "deadline_text": dead_text,
+            }
+        )
+
+    # 4. Out-of-scope tech stacks (pure PHP/WordPress, pure SAP ABAP)
+    for pat in DISQUALIFIED_TECH_PATTERNS:
+        if pat.search(title_lower):
+            return (
+                2,
+                "triage: non-matching tech stack",
+                {
+                    "skills": 20, "seniority": 50, "location": 100, "domain": 20, "recency": 100, "reach": 100,
+                    "matched_skills": [],
+                    "missing_skills": [title],
+                    "seniority_fit": "Stack misalignment",
+                    "advice": "Core stack is outside target backend/fullstack domains.",
+                    "salary_min": sal_min, "salary_max": sal_max, "salary_currency": sal_curr, "salary_text": sal_text,
+                    "deadline_at": dead_at, "deadline_text": dead_text,
+                }
+            )
+
+    return None

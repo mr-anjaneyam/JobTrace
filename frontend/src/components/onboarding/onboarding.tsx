@@ -90,7 +90,7 @@ export function Onboarding({ onOpenDashboard }: { onOpenDashboard: () => void })
     try {
       const settings: SettingsUpdate = {
         candidate: { seniority: draft.seniority, locations: draft.locations },
-        filters: { title_include: draft.roles },
+        filters: { title_include: draft.roles, country: draft.country, include_remote: draft.includeRemote },
         llm: { provider: draft.provider, ...(provider?.defaultModel && draft.model.trim() ? { model: draft.model.trim() } : {}) },
       };
       if (draft.botToken.trim()) settings.telegram = { bot_token: draft.botToken.trim(), chat_ids: draft.chatIds };

@@ -19,6 +19,14 @@ SECRET_ENV = (
 
 
 @pytest.fixture(autouse=True)
+def close_log_files():
+    yield
+    from jobtrace import applog
+
+    applog.reset()
+
+
+@pytest.fixture(autouse=True)
 def clean_env():
     saved = dict(os.environ)
     for name in SECRET_ENV:

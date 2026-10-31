@@ -25,7 +25,14 @@ CREATE TABLE IF NOT EXISTS jobs (
     breakdown       TEXT,
     alerted         INTEGER NOT NULL DEFAULT 0,
     description     TEXT,
-    matches_filter  INTEGER NOT NULL DEFAULT 1
+    matches_filter  INTEGER NOT NULL DEFAULT 1,
+    salary_min      REAL,
+    salary_max      REAL,
+    salary_currency TEXT,
+    salary_text     TEXT,
+    deadline_at     REAL,
+    deadline_text   TEXT,
+    last_verified_at REAL
 );
 
 CREATE INDEX IF NOT EXISTS idx_jobs_first_seen ON jobs(first_seen);
@@ -64,8 +71,77 @@ class Store:
             pass
         self.db.executescript(SCHEMA)
         self._init_fts()
+        self._upgrade_schema()
         self.db.commit()
         self.last_upsert_ts = time.time()
+
+
+    def _upgrade_schema(self) -> None:
+        """Add new columns to existing SQLite database if they do not exist."""
+        cols = {c[1] for c in self.db.execute("PRAGMA table_info(jobs)").fetchall()}
+        additions = [
+            ("salary_min", "REAL"),
+            ("salary_max", "REAL"),
+            ("salary_currency", "TEXT"),
+            ("salary_text", "TEXT"),
+            ("deadline_at", "REAL"),
+            ("deadline_text", "TEXT"),
+            ("last_verified_at", "REAL"),
+        ]
+        for col, col_type in additions:
+            if col not in cols:
+                try:
+                    self.db.execute(f"ALTER TABLE jobs ADD COLUMN {col} {col_type};")
+                except Exception:
+                    pass
+        self.db.commit()
+
+    def close_elapsed_deadlines(self, now: float | None = None) -> list[dict]:
+        """Automatically close any jobs whose application deadline has elapsed."""
+        curr = now if now is not None else time.time()
+        rows = self.db.execute(
+            """SELECT id, company, title, deadline_text, deadline_at
+               FROM jobs
+               WHERE closed_at IS NULL AND deadline_at IS NOT NULL AND deadline_at < ?""",
+            (curr,),
+        ).fetchall()
+        if not rows:
+            return []
+        closed_items = []
+        for r in rows:
+            reason = f"Application deadline elapsed ({r['deadline_text'] or 'passed'})"
+            self.db.execute(
+                "UPDATE jobs SET closed_at = ?, reason = ? WHERE id = ?",
+                (curr, reason, r["id"]),
+            )
+            closed_items.append(dict(r))
+        self.db.commit()
+        return closed_items
+
+    def get_jobs_for_liveness_check(self, limit: int = 50, cadence_hours: float = 12.0) -> list[dict]:
+        """Fetch active jobs with no deadline that haven't been verified in `cadence_hours`."""
+        cutoff = time.time() - (cadence_hours * 3600)
+        rows = self.db.execute(
+            """SELECT id, company, title, url, source, last_verified_at
+               FROM jobs
+               WHERE closed_at IS NULL
+                 AND url IS NOT NULL AND length(url) > 5
+                 AND deadline_at IS NULL
+                 AND (last_verified_at IS NULL OR last_verified_at < ?)
+               ORDER BY score DESC NULLS LAST
+               LIMIT ?""",
+            (cutoff, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def touch_liveness_verified(self, job_ids: list[str], timestamp: float | None = None) -> None:
+        """Mark jobs as verified active at `timestamp`."""
+        if not job_ids:
+            return
+        ts = timestamp if timestamp is not None else time.time()
+        for jid in job_ids:
+            self.db.execute("UPDATE jobs SET last_verified_at = ? WHERE id = ?", (ts, jid))
+        self.db.commit()
 
     def _init_fts(self) -> None:
         """Initialize FTS5 virtual table for fast full-text searching if supported."""
@@ -116,6 +192,13 @@ class Store:
                 old_desc_len = row[2] or 0
                 # Cleaning is the costly step, so skip it for rows that already have a description
                 desc = clean_html_text(raw_desc)[:8000] if old_desc_len < 50 and raw_desc else ""
+                s_min = j.get("salary_min")
+                s_max = j.get("salary_max")
+                s_curr = j.get("salary_currency", "")
+                s_txt = j.get("salary_text", "")
+                d_at = j.get("deadline_at")
+                d_txt = j.get("deadline_text", "")
+
                 if old_desc_len < 50 and len(desc) >= 50:
                     self.db.execute(
                         """UPDATE jobs SET
@@ -125,9 +208,18 @@ class Store:
                                url = COALESCE(?, url),
                                location = COALESCE(?, location),
                                posted_at = COALESCE(?, posted_at),
-                               description = ?
+                               description = ?,
+                               salary_min = COALESCE(?, salary_min),
+                               salary_max = COALESCE(?, salary_max),
+                               salary_currency = CASE WHEN ? != '' THEN ? ELSE salary_currency END,
+                               salary_text = CASE WHEN ? != '' THEN ? ELSE salary_text END,
+                               deadline_at = COALESCE(?, deadline_at),
+                               deadline_text = CASE WHEN ? != '' THEN ? ELSE deadline_text END
                            WHERE id = ?""",
-                        (now, matches_filter, j.get("url"), j.get("location"), j.get("posted_at"), desc, jid),
+                        (
+                            now, matches_filter, j.get("url"), j.get("location"), j.get("posted_at"), desc,
+                            s_min, s_max, s_curr, s_curr, s_txt, s_txt, d_at, d_txt, d_txt, jid
+                        ),
                     )
                     self.sync_fts(jid, j["title"], j["company"], j.get("location", ""), desc)
                 else:
@@ -138,21 +230,38 @@ class Store:
                                matches_filter = ?,
                                url = COALESCE(?, url),
                                location = COALESCE(?, location),
-                               posted_at = COALESCE(?, posted_at)
+                               posted_at = COALESCE(?, posted_at),
+                               salary_min = COALESCE(?, salary_min),
+                               salary_max = COALESCE(?, salary_max),
+                               salary_currency = CASE WHEN ? != '' THEN ? ELSE salary_currency END,
+                               salary_text = CASE WHEN ? != '' THEN ? ELSE salary_text END,
+                               deadline_at = COALESCE(?, deadline_at),
+                               deadline_text = CASE WHEN ? != '' THEN ? ELSE deadline_text END
                            WHERE id = ?""",
-                        (now, matches_filter, j.get("url"), j.get("location"), j.get("posted_at"), jid),
+                        (
+                            now, matches_filter, j.get("url"), j.get("location"), j.get("posted_at"),
+                            s_min, s_max, s_curr, s_curr, s_txt, s_txt, d_at, d_txt, d_txt, jid
+                        ),
                     )
             else:
                 desc = clean_html_text(raw_desc)[:8000]
+                s_min = j.get("salary_min")
+                s_max = j.get("salary_max")
+                s_curr = j.get("salary_currency", "")
+                s_txt = j.get("salary_text", "")
+                d_at = j.get("deadline_at")
+                d_txt = j.get("deadline_text", "")
+
                 self.db.execute(
                     """INSERT INTO jobs (
                            id, company, title, url, location, source,
-                           posted_at, first_seen, last_seen, domain, description, matches_filter
-                       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                           posted_at, first_seen, last_seen, domain, description, matches_filter,
+                           salary_min, salary_max, salary_currency, salary_text, deadline_at, deadline_text
+                       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         jid, j["company"], j["title"], j.get("url"), j.get("location", ""),
                         j.get("source", ""), j.get("posted_at"), now, now, j.get("domain", ""),
-                        desc, matches_filter
+                        desc, matches_filter, s_min, s_max, s_curr, s_txt, d_at, d_txt
                     ),
                 )
                 self.sync_fts(jid, j["title"], j["company"], j.get("location", ""), desc)
@@ -259,10 +368,51 @@ class Store:
         return rows
 
     # -- scoring ------------------------------------------------------------
-    def save_score(self, job_id: str, score: int, reason: str, breakdown: dict | None = None) -> None:
+    def save_score(
+        self,
+        job_id: str,
+        score: int,
+        reason: str,
+        breakdown: dict | None = None,
+        salary_min: float | None = None,
+        salary_max: float | None = None,
+        salary_currency: str = "",
+        salary_text: str = "",
+        deadline_at: float | None = None,
+        deadline_text: str = "",
+    ) -> None:
+        # If salary or deadline were parsed into breakdown dict, use them as fallbacks
+        if breakdown and isinstance(breakdown, dict):
+            if salary_min is None:
+                salary_min = breakdown.get("salary_min")
+            if salary_max is None:
+                salary_max = breakdown.get("salary_max")
+            if not salary_currency:
+                salary_currency = breakdown.get("salary_currency", "")
+            if not salary_text:
+                salary_text = breakdown.get("salary_text", "")
+            if deadline_at is None:
+                deadline_at = breakdown.get("deadline_at")
+            if not deadline_text:
+                deadline_text = breakdown.get("deadline_text", "")
+
         self.db.execute(
-            "UPDATE jobs SET score = ?, reason = ?, breakdown = ? WHERE id = ?",
-            (score, reason, json.dumps(breakdown or {}), job_id),
+            """UPDATE jobs SET
+                   score = ?,
+                   reason = ?,
+                   breakdown = ?,
+                   salary_min = COALESCE(?, salary_min),
+                   salary_max = COALESCE(?, salary_max),
+                   salary_currency = CASE WHEN ? != '' THEN ? ELSE salary_currency END,
+                   salary_text = CASE WHEN ? != '' THEN ? ELSE salary_text END,
+                   deadline_at = COALESCE(?, deadline_at),
+                   deadline_text = CASE WHEN ? != '' THEN ? ELSE deadline_text END
+               WHERE id = ?""",
+            (
+                score, reason, json.dumps(breakdown or {}),
+                salary_min, salary_max, salary_currency, salary_currency,
+                salary_text, salary_text, deadline_at, deadline_text, deadline_text, job_id
+            ),
         )
         self.db.commit()
 

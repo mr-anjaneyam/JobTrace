@@ -368,6 +368,22 @@
   font-weight: 600;
 }
 
+.ob-check-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  font-size: 13px;
+  color: #475569;
+  cursor: pointer;
+}
+
+.ob-check-row input {
+  width: 16px;
+  height: 16px;
+  accent-color: #0a6bff;
+}
+
 /* Buttons */
 .ob-btn {
   display: inline-flex;

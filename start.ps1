@@ -2,13 +2,37 @@
 # JobTrace - Single Full Stack Startup Script (PowerShell)
 # Starts Backend (FastAPI) and Frontend (React/Vite) concurrently with IP display
 # ==============================================================================
+[CmdletBinding(PositionalBinding = $false)]
 param(
     [int]$FrontendPort = 3000,
-    [int]$BackendPort = 8000
+    [int]$BackendPort = 8000,
+    [switch]$New,
+    [Parameter(ValueFromRemainingArguments = $true)]
+    [string[]]$RemainingArgs
 )
 
 $RootDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $RootDir
+
+# Positional binding is off, so --new and bare port numbers (start.ps1 3000 8000) land here
+$portArgs = @()
+foreach ($a in $RemainingArgs) {
+    if ($a -in '--new', '-new') { $New = $true }
+    elseif ($a -match '^\d+$') { $portArgs += [int]$a }
+    elseif ($a) {
+        Write-Host ('Unknown option: ' + $a + '. Use: start.ps1 [--new] [-FrontendPort N] [-BackendPort N]') -ForegroundColor Red
+        exit 1
+    }
+}
+if ($portArgs.Count -ge 1 -and -not $PSBoundParameters.ContainsKey('FrontendPort')) { $FrontendPort = $portArgs[0] }
+if ($portArgs.Count -ge 2 -and -not $PSBoundParameters.ContainsKey('BackendPort')) { $BackendPort = $portArgs[1] }
+
+if ($New) {
+    $runId = Get-Date -Format 'yyyyMMdd-HHmmss-fff'
+    $env:JOBTRACE_HOME = Join-Path $RootDir (Join-Path 'temp\jobtrace-runs' $runId)
+    New-Item -ItemType Directory -Force -Path $env:JOBTRACE_HOME | Out-Null
+    Write-Host ('  [Fresh run] Data: ' + $env:JOBTRACE_HOME) -ForegroundColor Magenta
+}
 
 # 1. Detect Network IPv4 Address
 $networkIp = $null

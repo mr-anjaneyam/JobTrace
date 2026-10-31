@@ -17,6 +17,7 @@ import { api, type ApiProfile, type TelegramChat } from '@/lib/api';
 import { Logo } from '@/components/jobtrace/logo';
 import { ChipInput } from './chip-input';
 import {
+  COUNTRY_OPTIONS,
   LOCATION_SUGGESTIONS,
   PROVIDERS,
   ROLE_SUGGESTIONS,
@@ -260,6 +261,29 @@ export function FocusStep({ draft, patch }: StepProps) {
       <Field label="Locations" htmlFor="ob-locations" hint="Used to rank roles. Leave empty to see everything.">
         <ChipInput id="ob-locations" value={draft.locations} onChange={(locations) => patch({ locations })} suggestions={LOCATION_SUGGESTIONS} placeholder="City or Remote" />
       </Field>
+      <Field label="Show jobs in" hint="Picking a country keeps only roles located there and adds companies that hire in it.">
+        <div className="ob-segment" style={{ ['--n' as string]: COUNTRY_OPTIONS.length, ['--idx' as string]: Math.max(0, COUNTRY_OPTIONS.findIndex((o) => o.value === draft.country)) }} role="radiogroup" aria-label="Country">
+          <span className="ob-segment-thumb" />
+          {COUNTRY_OPTIONS.map((o) => (
+            <button
+              key={o.value || 'any'}
+              type="button"
+              role="radio"
+              aria-checked={draft.country === o.value}
+              className={draft.country === o.value ? 'is-on' : ''}
+              onClick={() => patch({ country: o.value })}
+            >
+              {o.label}
+            </button>
+          ))}
+        </div>
+        {draft.country && (
+          <label className="ob-check-row">
+            <input type="checkbox" checked={draft.includeRemote} onChange={(e) => patch({ includeRemote: e.target.checked })} />
+            <span>Also keep remote roles that are not tied to a country</span>
+          </label>
+        )}
+      </Field>
     </>
   );
 }
@@ -312,7 +336,7 @@ export function TelegramStep({ draft, patch }: StepProps) {
         subtitle="Get a Telegram message the moment a strong match appears. Prefer not to? Skip it and use the dashboard."
       />
       <Field label="Bot token" htmlFor="ob-token">
-        <SecretInput id="ob-token" value={draft.botToken} onChange={(botToken) => patch({ botToken })} placeholder="123456789:ABC..." />
+        <SecretInput id="ob-token" value={draft.botToken} onChange={(botToken) => patch({ botToken })} placeholder="123456:ABC..." />
       </Field>
       <button type="button" className="ob-disclosure" onClick={() => setGuide(!guide)} aria-expanded={guide}>
         <ChevronDown size={14} className={guide ? 'is-open' : ''} />
@@ -418,6 +442,7 @@ export function ReviewStep({ draft, goTo }: { draft: Draft; goTo: (index: number
     { label: 'Roles', value: draft.roles.join(', ') || 'Any title', step: 3 },
     { label: 'Seniority', value: SENIORITY_OPTIONS.find((o) => o.value === draft.seniority)?.label ?? draft.seniority, step: 3 },
     { label: 'Locations', value: draft.locations.join(', ') || 'Anywhere', step: 3 },
+    { label: 'Show jobs in', value: COUNTRY_OPTIONS.find((o) => o.value === draft.country)?.label ?? 'Anywhere', step: 3 },
     { label: 'Telegram', value: draft.botToken.trim() ? `Connected (${draft.chatIds.length || 'no'} chat${draft.chatIds.length === 1 ? '' : 's'})` : 'Skipped', step: 4 },
     { label: 'Scoring', value: provider?.title ?? draft.provider, step: 5 },
   ];

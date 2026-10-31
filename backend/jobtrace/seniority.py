@@ -40,10 +40,20 @@ JUNIOR_TITLES = (
     r"\b(?:l3|ic3|e3)\b",
 )
 
+FRESHER_ONLY_PATTERNS = (
+    r"\b(?:only\s+for\s+freshers?|freshers?\s+only|strictly\s+freshers?)\b",
+    r"\b(?:batch\s+of\s+202[4-7]\s+only|202[4-7]\s+(?:batch\s+)?passouts?\s+only)\b",
+    r"\b(?:campus\s+(?:recruitment|drive|placement|hiring)|college\s+recruitment)\b",
+    r"\b(?:student\s+intern(?:ship)?|college\s+intern(?:ship)?|summer\s+intern(?:ship)?|winter\s+intern(?:ship)?)\b",
+    r"\b(?:pre-final\s+year|final\s+year\s+students?|currently\s+enrolled\s+students?)\b",
+    r"\b(?:must\s+have\s+0\s+years?|0\s*years?\s+exp\s+only)\b",
+)
+
 _SENIOR_RE = re.compile(r"\b(?:" + "|".join(SENIOR_TITLES) + r")\b", re.I)
 _EXEC_RE = re.compile(r"\b(?:" + "|".join(EXECUTIVE_TITLES) + r")\b", re.I)
 _MID_RE = re.compile(r"(?:" + "|".join(MID_TITLES) + r")", re.I)
 _JUNIOR_RE = re.compile(r"\b(?:" + "|".join(JUNIOR_TITLES) + r")\b", re.I)
+_FRESHER_ONLY_RE = re.compile(r"(?:" + "|".join(FRESHER_ONLY_PATTERNS) + r")", re.I)
 
 
 def is_senior_title(title: str) -> bool:
@@ -63,6 +73,18 @@ def is_mid_title(title: str) -> bool:
 def is_junior_title(title: str) -> bool:
     t = title or ""
     return bool(_JUNIOR_RE.search(t))
+
+
+def is_fresher_only(title: str, description: str = "") -> bool:
+    """Return True if the posting is explicitly restricted to students, campus hiring, or 0-exp freshers only.
+
+    Does NOT match overlapping early-career bands like '0-2 years', 'fresher - 2 yrs', or '1-3 years'.
+    """
+    blob = f"{title} {description[:2500]}".lower()
+    # If the posting explicitly accepts 1-2 years or 1-3 years, it is NOT fresher-only
+    if re.search(r"\b(?:1\s*[-–to]\s*[23]\s*(?:years?|yrs?)|0\s*[-–to]\s*[23]\s*(?:years?|yrs?)|fresher\s*[-–to]\s*2\s*(?:years?|yrs?))\b", blob):
+        return False
+    return bool(_FRESHER_ONLY_RE.search(blob))
 
 
 def extract_required_years(text: str, title: str = "") -> float | None:
@@ -166,6 +188,18 @@ def apply_cap(
     cand_years_str = f"{candidate_years:g}" if candidate_years is not None else "<2"
 
     if mode in ("intern", "junior", "entry"):
+        # 0. Strict fresher / campus-recruitment / student-intern mismatch for experienced candidates
+        # Candidates with >= 0.5 yrs full-time experience should not be recommended roles strictly for college freshers
+        if (candidate_years is not None and candidate_years >= 0.5) or mode == "junior":
+            if is_fresher_only(t, description):
+                fresher_cap = min(2, cap_value)
+                if breakdown is not None:
+                    breakdown["seniority"] = min(breakdown.get("seniority", 100), 15)
+                if score <= fresher_cap:
+                    return score, reason
+                note = f"capped at {fresher_cap}: strict fresher/campus-only role (candidate has {cand_years_str} yrs industry exp)"
+                return fresher_cap, f"{reason}; {note}" if reason else note
+
         # 1. Hard experience mismatch from description
         if req_years is not None and req_years >= 4.0:
             target_cap = min(2, cap_value)

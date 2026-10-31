@@ -8,11 +8,16 @@ export interface ApiJob {
   reason: string;
   domain: string;
   source: string;
-  breakdown?: string | Record<string, number>;
+  breakdown?: string | Record<string, any>;
   first_seen?: number;
   posted_at?: number;
   description?: string;
   closed_at?: number | null;
+  salary_text?: string;
+  salary_min?: number;
+  salary_max?: number;
+  deadline_at?: number;
+  deadline_text?: string;
 }
 
 export interface ApiStateResponse {
@@ -69,10 +74,27 @@ export interface ApiSettings {
     model: string;
     min_score: number;
     triage: boolean;
+    daily_token_limit: number;
+    max_to_score: number;
+    batch_size: number;
+    tokens_per_batch: number;
+    triage_floor: number;
   };
+  alerts: { min_score: number | null; max_per_alert: number };
+  digest: { max_jobs: number };
+  storage: { retention_days: number };
+  discovery: { enabled: boolean };
+  usage: { tokens_today: number; daily_limit: number; remaining: number };
+  logging: { level: string; log_bodies: boolean; retention_days: number; max_body_chars: number };
   candidate: {
     seniority: string;
     locations: string[];
+  };
+  filters: {
+    title_include: string[];
+    title_exclude: string[];
+    country: string;
+    include_remote: boolean;
   };
   resume_path?: string;
   api_keys: Record<string, string>;
@@ -80,9 +102,14 @@ export interface ApiSettings {
 
 export interface SettingsUpdate {
   telegram?: { bot_token?: string; chat_ids?: string[] | string };
-  llm?: { provider?: string; model?: string; min_score?: number; triage?: boolean };
+  llm?: Partial<ApiSettings['llm']>;
   candidate?: { seniority?: string; locations?: string[] };
-  filters?: { title_include?: string[] };
+  filters?: Partial<ApiSettings['filters']>;
+  alerts?: Partial<ApiSettings['alerts']>;
+  digest?: Partial<ApiSettings['digest']>;
+  storage?: Partial<ApiSettings['storage']>;
+  discovery?: Partial<ApiSettings['discovery']>;
+  logging?: Partial<ApiSettings['logging']>;
   api_keys?: Record<string, string>;
 }
 
@@ -187,7 +214,7 @@ export const api = {
     return res.json();
   },
 
-  async updateSettings(settings: SettingsUpdate): Promise<{ ok: boolean; message?: string }> {
+  async updateSettings(settings: SettingsUpdate): Promise<{ ok: boolean; message?: string; added_companies?: string[] }> {
     const res = await fetch('/api/settings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -226,6 +253,22 @@ export const api = {
       method: 'POST',
     });
     if (!res.ok) throw new Error(`HTTP ${res.status} running discard-closed`);
+    return res.json();
+  },
+
+  async getPersonas(): Promise<{ active: string; personas: Record<string, any> }> {
+    const res = await fetch('/api/personas');
+    if (!res.ok) throw new Error(`HTTP ${res.status} fetching personas`);
+    return res.json();
+  },
+
+  async setActivePersona(persona: string): Promise<{ status: string; active_persona: string }> {
+    const res = await fetch('/api/personas/active', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ persona }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status} setting active persona`);
     return res.json();
   },
 

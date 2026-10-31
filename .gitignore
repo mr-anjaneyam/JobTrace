@@ -25,11 +25,16 @@ __pycache__/
 digest_preview.html
 alert_preview.html
 
+# keep the logs folder, ignore everything written into it
+logs/*
+!logs/.gitkeep
+
 .DS_Store
 temp/
 
 # private launch notes
 SHOWCASE.md
+JOB_SITES.md
 
 # frontend & node
 node_modules/

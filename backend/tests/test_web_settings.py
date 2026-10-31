@@ -42,20 +42,20 @@ def test_secrets_are_masked_and_round_trip(client):
     client.post(
         "/api/settings",
         json={
-            "telegram": {"bot_token": "123456:ABCDEFGHIJKLMNOP", "chat_ids": "1"},
-            "api_keys": {"XKIRO_API_KEY": "sk-super-secret-value"},
+            "telegram": {"bot_token": "00000:ABCDEFGHIJKLMNOP", "chat_ids": "1"},
+            "api_keys": {"XKIRO_API_KEY": "dummy-sample-secret-value"},
         },
     )
     data = client.get("/api/settings").json()
     assert "ABCDEFGHIJ" not in data["telegram"]["bot_token"]
     assert MASK_CHAR in data["telegram"]["bot_token"]
-    assert "super-secret" not in data["api_keys"]["XKIRO_API_KEY"]
+    assert "sample-secret" not in data["api_keys"]["XKIRO_API_KEY"]
     assert data["api_keys"]["XKIRO_API_KEY"].endswith("alue")
 
     # Saving the masked values back must not overwrite the real secrets
     client.post("/api/settings", json={"telegram": data["telegram"], "api_keys": data["api_keys"]})
-    assert os.environ["XKIRO_API_KEY"] == "sk-super-secret-value"
-    assert os.environ["TELEGRAM_BOT_TOKEN"] == "123456:ABCDEFGHIJKLMNOP"
+    assert os.environ["XKIRO_API_KEY"] == "dummy-sample-secret-value"
+    assert os.environ["TELEGRAM_BOT_TOKEN"] == "00000:ABCDEFGHIJKLMNOP"
 
 
 def test_unknown_env_names_are_rejected(client):
@@ -226,9 +226,9 @@ def test_detect_chat_endpoint(client, monkeypatch):
         return True, [{"id": "42", "name": "Ada", "type": "private"}], "Found 1 chat(s)."
 
     monkeypatch.setattr(telegram, "detect_chats", fake_detect)
-    data = client.post("/api/telegram/detect-chat", json={"bot_token": "123456:ABCDEFGHIJKLMNOPQRSTUV"}).json()
+    data = client.post("/api/telegram/detect-chat", json={"bot_token": "00000:ABCDEFGHIJKLMNOPQRSTUV"}).json()
     assert data["ok"] and data["chats"][0]["id"] == "42"
-    assert seen["token"] == "123456:ABCDEFGHIJKLMNOPQRSTUV"
+    assert seen["token"] == "00000:ABCDEFGHIJKLMNOPQRSTUV"
 
 
 def test_detect_chats_validates_token_and_parses_updates(monkeypatch):
@@ -243,7 +243,7 @@ def test_detect_chats_validates_token_and_parses_updates(monkeypatch):
             return {"result": [{"message": {"chat": {"id": 7, "first_name": "Ada", "last_name": "L", "type": "private"}}}]}
 
     monkeypatch.setattr(telegram.requests, "get", lambda *a, **k: Resp())
-    ok, chats, _ = telegram.detect_chats("123456:ABCDEFGHIJKLMNOPQRSTUV")
+    ok, chats, _ = telegram.detect_chats("00000:ABCDEFGHIJKLMNOPQRSTUV")
     assert ok and chats == [{"id": "7", "name": "Ada L", "type": "private"}]
 
 
@@ -285,3 +285,72 @@ def test_version_endpoint(client):
     assert data["version"]
     assert "commit" in data
 
+
+def test_country_filter_roundtrip(client, workspace):
+    import yaml
+    data = client.post("/api/settings", json={"filters": {"country": "India", "include_remote": True}}).json()
+    assert data["ok"] is True and "Paytm" in data["added_companies"]
+    saved = yaml.safe_load((workspace / "config.yaml").read_text(encoding="utf-8"))
+    assert saved["filters"]["country"] == "india" and saved["filters"]["include_remote"] is True
+    assert any(c["name"] == "Paytm" for c in saved["companies"])
+    got = client.get("/api/settings").json()["filters"]
+    assert got["country"] == "india" and got["include_remote"] is True
+
+    # clearing the country keeps the companies but stops filtering
+    client.post("/api/settings", json={"filters": {"country": ""}})
+    assert client.get("/api/settings").json()["filters"]["country"] == ""
+
+    # unknown countries are ignored
+    client.post("/api/settings", json={"filters": {"country": "atlantis"}})
+    assert client.get("/api/settings").json()["filters"]["country"] == ""
+
+
+def test_limits_default_then_update_and_clamp(client, workspace):
+    import yaml
+    data = client.get("/api/settings").json()
+    assert data["llm"]["daily_token_limit"] == 500_000
+    assert data["usage"] == {"tokens_today": 0, "daily_limit": 500_000, "remaining": 460_000}
+
+    payload = {
+        "llm": {"daily_token_limit": "20000000", "max_to_score": 12000, "batch_size": 500, "tokens_per_batch": "abc", "triage_floor": 4},
+        "alerts": {"min_score": 8, "max_per_alert": 0},
+        "digest": {"max_jobs": 60},
+        "storage": {"retention_days": 30},
+        "discovery": {"enabled": True},
+        "filters": {"title_exclude": "director, manager, "},
+    }
+    assert client.post("/api/settings", json=payload).json()["ok"] is True
+    got = client.get("/api/settings").json()
+    assert got["llm"]["daily_token_limit"] == 20_000_000
+    assert got["llm"]["max_to_score"] == 12_000
+    assert got["llm"]["batch_size"] == 100  # clamped to the allowed maximum
+    assert got["llm"]["tokens_per_batch"] == 3_400  # junk is ignored, default stays
+    assert got["alerts"] == {"min_score": 8, "max_per_alert": 1}
+    assert got["digest"]["max_jobs"] == 60 and got["storage"]["retention_days"] == 30
+    assert got["discovery"]["enabled"] is True
+    assert got["filters"]["title_exclude"] == ["director", "manager"]
+    assert got["usage"]["daily_limit"] == 20_000_000
+
+    # a blank alert score goes back to following the main minimum score
+    client.post("/api/settings", json={"alerts": {"min_score": ""}})
+    saved = yaml.safe_load((workspace / "config.yaml").read_text(encoding="utf-8"))
+    assert "min_score" not in saved["alerts"]
+
+
+def test_full_settings_roundtrip_does_not_change_anything(client, workspace):
+    first = client.get("/api/settings").json()
+    client.post("/api/settings", json=first)
+    assert client.get("/api/settings").json() == first
+
+
+def test_logging_settings_roundtrip(client, workspace):
+    data = client.get("/api/settings").json()
+    assert data["logging"] == {"level": "INFO", "log_bodies": True, "retention_days": 14, "max_body_chars": 4000}
+
+    client.post("/api/settings", json={"logging": {"level": "debug", "log_bodies": False, "retention_days": 400, "max_body_chars": "800"}})
+    got = client.get("/api/settings").json()["logging"]
+    assert got == {"level": "DEBUG", "log_bodies": False, "retention_days": 365, "max_body_chars": 800}
+
+    client.post("/api/settings", json={"logging": {"level": "nonsense"}})
+    assert client.get("/api/settings").json()["logging"]["level"] == "DEBUG"
+    assert (workspace / "logs").is_dir()  # saving settings starts file logging in the data folder

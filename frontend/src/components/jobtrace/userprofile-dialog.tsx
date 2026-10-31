@@ -15,6 +15,9 @@ export function UserProfileDialog({
   onProfileUpdated?: () => void;
 }) {
   const [profile, setProfile] = useState<ApiProfile | null>(null);
+  const [personas, setPersonas] = useState<Record<string, any>>({});
+  const [activePersona, setActivePersona] = useState<string>('backend');
+  const [switchingPersona, setSwitchingPersona] = useState(false);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -31,12 +34,36 @@ export function UserProfileDialog({
     setLoading(true);
     setStatusMsg(null);
     try {
-      const data = await api.getProfile();
-      setProfile(data);
+      const [profileData, personaData] = await Promise.all([
+        api.getProfile(),
+        api.getPersonas().catch(() => null),
+      ]);
+      setProfile(profileData);
+      if (personaData && personaData.personas) {
+        setPersonas(personaData.personas);
+        setActivePersona(personaData.active || 'backend');
+      }
     } catch (e: any) {
       setStatusMsg({ type: 'error', text: e.message || 'Failed to load profile' });
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleSelectPersona = async (key: string) => {
+    if (key === activePersona || switchingPersona) return;
+    setSwitchingPersona(true);
+    setStatusMsg(null);
+    try {
+      await api.setActivePersona(key);
+      setActivePersona(key);
+      await loadProfile();
+      if (onProfileUpdated) onProfileUpdated();
+      setStatusMsg({ type: 'success', text: `Switched target persona to '${personas[key]?.title || key}'!` });
+    } catch (e: any) {
+      setStatusMsg({ type: 'error', text: e.message || 'Failed to switch persona' });
+    } finally {
+      setSwitchingPersona(false);
     }
   };
 
@@ -155,6 +182,40 @@ export function UserProfileDialog({
           </div>
         ) : profile ? (
           <div className="space-y-5 pt-2">
+            {/* Target Persona Switcher */}
+            {Object.keys(personas).length > 0 && (
+              <div className="p-3.5 rounded-lg border border-border bg-muted/20 space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                    <Sparkles size={13} className="text-primary" />
+                    Target AI Persona
+                  </label>
+                  <span className="text-[11px] text-muted-foreground">Adjusts AI matching & gap analysis</span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  {Object.entries(personas).map(([key, p]: [string, any]) => {
+                    const isActive = activePersona === key;
+                    return (
+                      <button
+                        key={key}
+                        type="button"
+                        disabled={switchingPersona}
+                        onClick={() => handleSelectPersona(key)}
+                        className={`p-2.5 rounded-md border text-left transition-all ${
+                          isActive
+                            ? 'border-primary bg-primary/10 text-primary shadow-xs'
+                            : 'border-border bg-background hover:bg-muted/50 text-muted-foreground'
+                        }`}
+                      >
+                        <div className="font-semibold text-xs truncate">{p.title || key}</div>
+                        <div className="text-[10px] text-muted-foreground line-clamp-1 mt-0.5">{p.headline}</div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             {/* Identity & Headline */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>

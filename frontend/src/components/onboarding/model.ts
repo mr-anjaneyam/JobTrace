@@ -6,6 +6,8 @@ export interface Draft {
   roles: string[];
   seniority: Seniority;
   locations: string[];
+  country: string;
+  includeRemote: boolean;
   botToken: string;
   chatIds: string[];
   provider: string;
@@ -39,6 +41,11 @@ export const ROLE_SUGGESTIONS = [
 ];
 
 export const LOCATION_SUGGESTIONS = ['Remote', 'Bengaluru', 'London', 'New York', 'San Francisco', 'Berlin'];
+
+export const COUNTRY_OPTIONS = [
+  { value: '', label: 'Anywhere' },
+  { value: 'india', label: 'India' },
+];
 
 export interface ProviderOption {
   id: string;
@@ -97,6 +104,8 @@ export const defaultDraft = (): Draft => ({
   roles: ['engineer', 'developer'],
   seniority: 'junior',
   locations: ['Remote'],
+  country: '',
+  includeRemote: false,
   botToken: '',
   chatIds: [],
   provider: 'local',

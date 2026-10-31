@@ -1,8 +1,10 @@
 """FastAPI web server for JobTrace with FTS5 search and live SSE streaming."""
 from __future__ import annotations
 
+import contextlib
 import gzip
 import json
+import logging
 import os
 import queue
 import re
@@ -12,14 +14,15 @@ from collections import OrderedDict, deque
 from pathlib import Path
 
 import yaml
-from fastapi import FastAPI, File, Request, UploadFile
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from .. import __commit__, __version__, sources, telegram
+from .. import __commit__, __version__, applog, geo, limits, presets, sources, telegram
+from ..budget import Budget
 from ..main import ROOT, load_config, load_dotenv
-from ..pipeline import ScanBusy, run_pipeline
+from ..pipeline import ScanBusy, passes_filters, run_pipeline, score_single_job
 from ..resume import build_details, extract_text, parse_details
 from ..store import Store
 
@@ -27,7 +30,18 @@ load_dotenv()
 
 FRONTEND_DIR = Path(__file__).resolve().parents[3] / "frontend"
 FRONTEND_DIST = FRONTEND_DIR / "dist"
-app = FastAPI(title="JobTrace API", version=__version__)
+log = logging.getLogger("jobtrace.web")
+
+
+@contextlib.asynccontextmanager
+async def lifespan(_: FastAPI):
+    applog.configure(get_cfg(), ROOT)
+    applog.attach_uvicorn()
+    log.info("JobTrace %s API started", __version__)
+    yield
+
+
+app = FastAPI(title="JobTrace API", version=__version__, lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -87,8 +101,10 @@ def _trigger_background_liveness_check() -> None:
             from ..verifier import verify_and_discard_jobs
             res = verify_and_discard_jobs(thread_store, limit=120)
             if res.get("closed_count", 0) > 0:
+                log.info("liveness: discarded %d archived or closed jobs", res["closed_count"])
                 print(f"[Liveness] Discarded {res['closed_count']} archived/closed jobs on UI load.")
         except Exception as e:
+            log.warning("liveness check failed: %s", e)
             print(f"[Liveness] Error during background check: {e}")
         finally:
             _liveness_state["checking"] = False
@@ -190,6 +206,10 @@ def get_settings():
     chat_ids = telegram.get_chat_ids(c)
     llm_cfg = c.get("llm") or {}
     cand_cfg = c.get("candidate") or {}
+    alerts_cfg = c.get("alerts") or {}
+    filters_cfg = c.get("filters") or {}
+    daily_limit = limits.get(c, "llm", "daily_token_limit")
+    budget = Budget(get_store().db, daily_limit=daily_limit)
 
     return {
         "telegram": {
@@ -202,10 +222,23 @@ def get_settings():
             "model": llm_cfg.get("model", "mistralai/mistral-large-2512"),
             "min_score": llm_cfg.get("min_score", 6),
             "triage": bool(llm_cfg.get("triage", False)),
+            **{k: limits.get(c, "llm", k) for k in ("daily_token_limit", "max_to_score", "batch_size", "tokens_per_batch", "triage_floor")},
         },
+        "alerts": {"min_score": alerts_cfg.get("min_score"), "max_per_alert": limits.get(c, "alerts", "max_per_alert")},
+        "digest": {"max_jobs": limits.get(c, "digest", "max_jobs")},
+        "storage": {"retention_days": limits.get(c, "storage", "retention_days")},
+        "discovery": {"enabled": bool((c.get("discovery") or {}).get("enabled"))},
+        "usage": {"tokens_today": budget.used(), "daily_limit": daily_limit, "remaining": budget.remaining()},
+        "logging": applog.settings(c),
         "candidate": {
             "seniority": cand_cfg.get("seniority", "junior"),
             "locations": cand_cfg.get("locations", []),
+        },
+        "filters": {
+            "title_include": filters_cfg.get("title_include", []),
+            "title_exclude": filters_cfg.get("title_exclude", []),
+            "country": filters_cfg.get("country", ""),
+            "include_remote": bool(filters_cfg.get("include_remote", False)),
         },
         "resume_path": c.get("resume_path", "resume.pdf"),
         "api_keys": {name: mask_secret(os.environ.get(name, "")) for name in API_KEY_NAMES},
@@ -265,6 +298,34 @@ async def update_settings(request: Request):
         if "triage" in l:
             c["llm"]["triage"] = bool(l["triage"])
 
+    # 2b. Numeric limits (budget, batch sizes, alert caps, retention), clamped to safe ranges
+    for (section, key) in limits.INT_SETTINGS:
+        incoming = data.get(section)
+        if isinstance(incoming, dict) and key in incoming:
+            n = limits.clamp(section, key, incoming[key])
+            if n is not None:
+                c.setdefault(section, {})[key] = n
+    alerts_in = data.get("alerts")
+    if isinstance(alerts_in, dict) and "min_score" in alerts_in:
+        raw = alerts_in["min_score"]
+        if raw in (None, ""):
+            (c.get("alerts") or {}).pop("min_score", None)  # blank follows the main minimum score
+        else:
+            try:
+                c.setdefault("alerts", {})["min_score"] = max(0, min(10, int(float(raw))))
+            except (TypeError, ValueError):
+                pass
+    disc_in = data.get("discovery")
+    if isinstance(disc_in, dict) and "enabled" in disc_in:
+        c.setdefault("discovery", {})["enabled"] = bool(disc_in["enabled"])
+    log_in = data.get("logging")
+    if isinstance(log_in, dict):
+        level = str(log_in.get("level", "")).upper()
+        if level in applog.LEVELS:
+            c.setdefault("logging", {})["level"] = level
+        if "log_bodies" in log_in:
+            c.setdefault("logging", {})["log_bodies"] = bool(log_in["log_bodies"])
+
     # 3. Candidate
     if "candidate" in data:
         cand = data["candidate"]
@@ -277,15 +338,30 @@ async def update_settings(request: Request):
                 locs = [x.strip() for x in locs.split(",") if x.strip()]
             c["candidate"]["locations"] = locs
 
-    # 3b. Role keywords used by the title filter
+    # 3b. Role keywords and the country filter
+    added_companies: list[str] = []
     if "filters" in data:
-        roles = data["filters"].get("title_include")
+        fl = data["filters"]
+        roles = fl.get("title_include")
         if isinstance(roles, str):
             roles = [x.strip() for x in roles.split(",")]
         if isinstance(roles, list):
             cleaned = [str(x).strip().lower() for x in roles if str(x).strip()]
             if cleaned:
                 c.setdefault("filters", {})["title_include"] = cleaned[:30]
+        banned = fl.get("title_exclude")
+        if isinstance(banned, str):
+            banned = [x.strip() for x in banned.split(",")]
+        if isinstance(banned, list):
+            c.setdefault("filters", {})["title_exclude"] = [str(x).strip().lower() for x in banned if str(x).strip()][:30]
+        if "country" in fl:
+            country = geo.normalize_country(str(fl.get("country") or ""))
+            if country == "" or country in geo.COUNTRIES:
+                c.setdefault("filters", {})["country"] = country
+                if country:
+                    added_companies = presets.add_missing(c, country)
+        if "include_remote" in fl:
+            c.setdefault("filters", {})["include_remote"] = bool(fl["include_remote"])
 
     # 4. API Keys
     if "api_keys" in data:
@@ -304,8 +380,9 @@ async def update_settings(request: Request):
     if env_updates:
         update_env_file(env_updates)
     save_config(c)
+    applog.configure(c, ROOT)
 
-    return {"ok": True, "message": "Settings saved successfully."}
+    return {"ok": True, "message": "Settings saved successfully.", "added_companies": added_companies}
 
 
 @app.post("/api/test-telegram")
@@ -645,13 +722,17 @@ def state(request: Request):
     expire_days = int(disc_cfg.get("expire_after_days", 14))
     s.close_stale(["remotive", "arbeitnow"], max_age_days=expire_days)
 
-    # 2. Trigger asynchronous background liveness verification
+    # 2. Close elapsed deadlines synchronously before query
+    s.close_elapsed_deadlines()
+
+    # 3. Trigger asynchronous background 12-hour content-based liveness verification
     _trigger_background_liveness_check()
 
     # Best-scored first, capped in SQL so huge databases never load every row
     rows = s.db.execute(
         """SELECT id, company, title, url, location, score, reason, domain, source,
-                  breakdown, first_seen, posted_at, substr(description, 1, 350) as description, closed_at
+                  breakdown, first_seen, posted_at, substr(description, 1, 350) as description, closed_at,
+                  salary_min, salary_max, salary_currency, salary_text, deadline_at, deadline_text
            FROM jobs
            WHERE closed_at IS NULL AND matches_filter = 1
            ORDER BY score DESC NULLS LAST, company, title
@@ -859,6 +940,210 @@ def scan(limit: int = 3000):
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
+
+@app.post("/api/jobs/ingest")
+async def ingest_jobs(request: Request):
+    """Ingest external job openings (e.g. from JobIntel Telegram scraper or webhooks).
+
+    Accepts a single job, list of jobs, or envelope {"jobs": [...], "score_now": bool, "notify": bool}.
+    If a URL is provided, JobTrace fetches live details (Workday, Greenhouse, Lever, Ashby, web)
+    directly from the destination page, so JobTrace does not rely on intermediary post summaries.
+    """
+    try:
+        data = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    if isinstance(data, list):
+        raw_jobs = data
+        score_now = True
+        notify = True
+    elif isinstance(data, dict):
+        if "jobs" in data and isinstance(data["jobs"], list):
+            raw_jobs = data["jobs"]
+            score_now = bool(data.get("score_now", True))
+            notify = bool(data.get("notify", True))
+        elif "url" in data or "title" in data:
+            raw_jobs = [data]
+            score_now = bool(data.get("score_now", True))
+            notify = bool(data.get("notify", True))
+        else:
+            raise HTTPException(status_code=400, detail="Expected 'jobs' list or single job object with 'url' or 'title'")
+    else:
+        raise HTTPException(status_code=400, detail="Payload must be a JSON object or array")
+
+    c = get_cfg()
+    store = get_store()
+    filters_cfg = c.get("filters") or {}
+    results = []
+
+    global_fetch_url = bool(c.get("ingest", {}).get("fetch_url", False))
+    if isinstance(data, dict) and "fetch_url" in data:
+        global_fetch_url = bool(data["fetch_url"])
+
+    default_bypass = bool(c.get("ingest", {}).get("bypass_filters", True))
+    global_bypass = bool(data.get("bypass_filters", default_bypass)) if isinstance(data, dict) else default_bypass
+
+    for item in raw_jobs:
+        if not isinstance(item, dict):
+            continue
+        raw_url = item.get("url") or item.get("link") or item.get("application_url") or ""
+        item_fetch_url = bool(item.get("fetch_url", global_fetch_url))
+        live_details = sources.fetch_job_details_from_url(raw_url) if (raw_url and item_fetch_url) else None
+
+        if live_details:
+            title = live_details.get("title") or item.get("title") or "Untitled Role"
+            company = live_details.get("company") or item.get("company") or "Unknown"
+            location = live_details.get("location") or item.get("location") or ""
+            desc = live_details.get("description") or item.get("description") or ""
+            clean_url = live_details.get("url") or raw_url
+            posted_at = live_details.get("posted_at") or item.get("posted_at")
+            source = item.get("source") or live_details.get("source") or "jobintel"
+        else:
+            title = (item.get("title") or "Untitled Role").strip()
+            company = (item.get("company") or "Unknown").strip()
+            location = (item.get("location") or "").strip()
+            desc = (item.get("description") or "").strip()
+            clean_url = raw_url
+            posted_at = item.get("posted_at")
+            source = item.get("source") or "jobintel"
+
+        norm = sources._norm(
+            company=company,
+            title=title,
+            raw_url=clean_url,
+            location=location,
+            posted_at=posted_at,
+            description=desc,
+            source=source,
+        )
+
+        # Extract salary and deadline
+        from ..salary import extract_salary
+        from ..deadline import extract_deadline, is_deadline_elapsed
+
+        blob = f"{title} {desc}"
+        s_min, s_max, s_curr, s_txt = extract_salary(blob)
+        d_at, d_txt = extract_deadline(blob)
+
+        # Allow explicit overrides from incoming payload
+        if item.get("salary_text"):
+            s_txt = str(item["salary_text"])
+        if item.get("salary_min") is not None:
+            s_min = float(item["salary_min"])
+        if item.get("salary_max") is not None:
+            s_max = float(item["salary_max"])
+        if item.get("deadline_text"):
+            d_txt = str(item["deadline_text"])
+        if item.get("deadline_at") is not None:
+            d_at = float(item["deadline_at"])
+
+        norm["salary_min"] = s_min
+        norm["salary_max"] = s_max
+        norm["salary_currency"] = s_curr
+        norm["salary_text"] = s_txt
+        norm["deadline_at"] = d_at
+        norm["deadline_text"] = d_txt
+
+        # External webhooks / manual ingestion bypass title_include regex by default,
+        # allowing the AI recruiter to evaluate candidate fit directly.
+        if "matches_filter" in item:
+            matches_filter = bool(item["matches_filter"])
+        else:
+            item_bypass = bool(item.get("bypass_filters", global_bypass))
+            if item_bypass:
+                matches_filter = True
+            else:
+                matches_filter = passes_filters(norm, filters_cfg)
+
+        norm["matches_filter"] = 1 if matches_filter else 0
+
+        # If deadline is already elapsed, mark closed immediately
+        if is_deadline_elapsed(d_at):
+            norm["closed_at"] = time.time()
+            norm["reason"] = f"Application deadline elapsed ({d_txt})"
+
+        store.upsert([norm])
+
+        score = None
+        reason = norm.get("reason")
+        breakdown = None
+        alerted = False
+
+        if score_now and norm["matches_filter"] and not norm.get("closed_at"):
+            try:
+                score, reason, breakdown = score_single_job(norm, c, store, ROOT)
+                norm["score"] = score
+                norm["reason"] = reason
+                norm["breakdown"] = breakdown
+
+                min_score = int(c.get("alerts", {}).get("min_score", c.get("llm", {}).get("min_score", 6)))
+                if notify and score >= min_score:
+                    try:
+                        label = time.strftime("%d %b %Y, %H:%M")
+                        telegram.send_alert(c, [norm], label=label)
+                        store.mark_alerted([norm["id"]])
+                        alerted = True
+                    except Exception as tg_err:
+                        log.warning("Telegram notification failed for %s: %s", norm["id"], tg_err)
+            except Exception as score_err:
+                log.exception("Error scoring ingested job %s: %s", norm["id"], score_err)
+                reason = f"Scoring error: {score_err}"
+
+        results.append({
+            "id": norm["id"],
+            "company": norm["company"],
+            "title": norm["title"],
+            "url": norm["url"],
+            "location": norm["location"],
+            "matches_filter": norm["matches_filter"],
+            "score": score,
+            "reason": reason,
+            "breakdown": breakdown,
+            "alerted": alerted,
+        })
+
+    return {
+        "status": "success",
+        "received": len(raw_jobs),
+        "ingested": len(results),
+        "results": results,
+    }
+
+
+@app.get("/api/personas")
+def get_personas():
+    c = get_cfg()
+    cand = c.get("candidate") or {}
+    active = cand.get("active_persona", "backend")
+    personas = cand.get("personas") or {}
+    return {
+        "active": active,
+        "personas": personas,
+    }
+
+
+@app.post("/api/personas/active")
+async def set_active_persona(request: Request):
+    data = await request.json()
+    persona = data.get("persona")
+    c = get_cfg()
+    cand = c.get("candidate") or {}
+    personas = cand.get("personas") or {}
+    if persona not in personas:
+        raise HTTPException(status_code=400, detail=f"Invalid persona. Available: {list(personas.keys())}")
+    cand["active_persona"] = persona
+    c["candidate"] = cand
+    save_config(c)
+    # Clear cached profile so next score uses the new persona
+    from ..pipeline import PROFILE_CACHE_NAME
+    cache_path = ROOT / PROFILE_CACHE_NAME
+    if cache_path.exists():
+        try:
+            cache_path.unlink()
+        except Exception:
+            pass
+    return {"status": "success", "active_persona": persona}
 
 # Registered last so API routes win; serves the built UI plus root files such as /logo.svg
 if FRONTEND_DIST.exists():

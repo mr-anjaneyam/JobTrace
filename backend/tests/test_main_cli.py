@@ -107,5 +107,5 @@ def test_is_set_up_requires_onboarding_or_telegram(tmp_path, monkeypatch):
 
 def test_is_set_up_for_legacy_installs_with_telegram(tmp_path, monkeypatch):
     monkeypatch.setattr(main, "ROOT", tmp_path)
-    cfg = {"telegram": {"bot_token": "123456:ABCDEFGHIJKLMNOPQRSTUV", "chat_ids": ["1"]}}
+    cfg = {"telegram": {"bot_token": "00000:ABCDEFGHIJKLMNOPQRSTUV", "chat_ids": ["1"]}}
     assert main.is_set_up(cfg) is True

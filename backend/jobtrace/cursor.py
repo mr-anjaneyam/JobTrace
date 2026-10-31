@@ -2,11 +2,14 @@
 from __future__ import annotations
 
 import os
+import logging
 import time
 
 import requests
 
-from . import batch
+from . import applog, batch
+
+log = logging.getLogger("jobtrace.llm")
 
 BASE = "https://api.cursor.com/v1"
 
@@ -40,7 +43,9 @@ class CursorScorer:
         return {"Authorization": f"Bearer {self.key}", "Content-Type": "application/json"}
 
     def _run_agent(self, prompt: str) -> str:
-        r = requests.post(
+        r = applog.traced(
+            "llm",
+            requests.post,
             f"{BASE}/agents",
             headers=self._headers(),
             timeout=60,
@@ -60,8 +65,11 @@ class CursorScorer:
         deadline = time.time() + self.timeout_seconds
         while time.time() < deadline:
             time.sleep(self.poll_seconds)
-            rr = requests.get(
+            rr = applog.traced(
+                "llm",
+                requests.get,
                 f"{BASE}/agents/{agent_id}/runs/{run_id}",
+                bodies=False,
                 headers=self._headers(),
                 timeout=60,
             )
@@ -70,6 +78,7 @@ class CursorScorer:
             run = rr.json()
             status = (run.get("status") or "").upper()
             if status in ("FINISHED", "COMPLETED", "SUCCEEDED"):
+                log.info("cursor run %s finished: %s", run_id, applog.clip(run.get("result")))
                 return run.get("result") or ""
             if status in ("FAILED", "CANCELLED", "ERROR", "EXPIRED"):
                 raise CursorError(f"Cursor run {status}: {str(run.get('error'))[:200]}")

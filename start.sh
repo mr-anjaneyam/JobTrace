@@ -12,8 +12,31 @@ if [ -d "$ROOT_DIR/.venv/bin" ]; then
     export PATH="$ROOT_DIR/.venv/bin:$PATH"
 fi
 
-FRONTEND_PORT="${1:-3000}"
-BACKEND_PORT="${2:-8000}"
+FRONTEND_PORT=3000
+BACKEND_PORT=8000
+NEW_RUN=0
+POSITIONAL=()
+
+for arg in "$@"; do
+    case "$arg" in
+        --new)
+            NEW_RUN=1
+            ;;
+        *)
+            POSITIONAL+=("$arg")
+            ;;
+    esac
+done
+
+[ -n "${POSITIONAL[0]:-}" ] && FRONTEND_PORT="${POSITIONAL[0]}"
+[ -n "${POSITIONAL[1]:-}" ] && BACKEND_PORT="${POSITIONAL[1]}"
+
+if [ "$NEW_RUN" -eq 1 ]; then
+    RUN_ID="$(date +%Y%m%d-%H%M%S)-$$"
+    export JOBTRACE_HOME="$ROOT_DIR/temp/jobtrace-runs/$RUN_ID"
+    mkdir -p "$JOBTRACE_HOME"
+    echo "  [Fresh run] Data: $JOBTRACE_HOME"
+fi
 
 # 1. Detect Network IP
 NETWORK_IP=""
