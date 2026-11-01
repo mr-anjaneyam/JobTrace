@@ -20,8 +20,7 @@ RUN apt-get update \
 
 WORKDIR /app
 COPY backend/requirements.txt backend/requirements.txt
-RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir -r backend/requirements.txt
+RUN python -m pip install --no-cache-dir --default-timeout=100 --retries 5 -r backend/requirements.txt
 
 COPY backend/ backend/
 COPY config.example.yaml .env.example ./
