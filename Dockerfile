@@ -47,7 +47,7 @@ WORKDIR /app/backend
 VOLUME /data
 EXPOSE 8000
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-    CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/onboarding/status', timeout=4).status == 200 else 1)"
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=5 \
+    CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=8).status == 200 else 1)"
 
 CMD ["python", "-m", "jobtrace.main", "web", "--port", "8000"]

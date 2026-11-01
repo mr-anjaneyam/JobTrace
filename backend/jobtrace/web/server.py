@@ -667,6 +667,14 @@ def _start_background_scan() -> bool:
     return True
 
 
+@app.get("/health")
+@app.get("/healthz")
+@app.get("/api/health")
+def health_check():
+    """Ultra-fast, zero-IO health check endpoint for Docker and load balancers."""
+    return {"status": "ok", "time": time.time()}
+
+
 @app.get("/api/version")
 def version_info():
     """What is running: a release tag in Docker images, \"dev\" when run from source."""
