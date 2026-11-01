@@ -93,6 +93,47 @@ def passes_filters(job: dict, filters_cfg: dict) -> bool:
     return True
 
 
+def get_candidate_details(cfg: dict, root_dir: Path) -> dict:
+    """Load or lazily extract candidate details directly from resume and config.
+    
+    Guarantees no hardcoded assumptions: years, skills, seniority, and locations
+    are derived entirely from the candidate's actual resume and settings.
+    """
+    cache_path = root_dir / ".resume_details.json"
+    if cache_path.exists():
+        try:
+            data = json.loads(cache_path.read_text(encoding="utf-8"))
+            if data and isinstance(data, dict):
+                return data
+        except Exception:
+            pass
+
+    # If details file does not exist, parse directly from resume file
+    resume_path_str = cfg.get("resume_path", "resume.pdf")
+    resume_file = root_dir / resume_path_str if not Path(resume_path_str).is_absolute() else Path(resume_path_str)
+    if resume_file.exists():
+        try:
+            from .resume import extract_text, parse_details
+            raw_text = extract_text(resume_file)
+            details = parse_details(raw_text)
+            if details:
+                try:
+                    cache_path.write_text(json.dumps(details, indent=2), encoding="utf-8")
+                except Exception:
+                    pass
+                return details
+        except Exception:
+            pass
+
+    candidate_cfg = cfg.get("candidate") or {}
+    return {
+        "seniority": candidate_cfg.get("seniority", "junior"),
+        "target_locations": geo.target_locations(cfg),
+        "years_of_experience": None,
+        "skills": [],
+    }
+
+
 def get_cached_profile(cfg: dict, scorer: Any, root_dir: Path, force: bool = False) -> str:
     resume_path_str = cfg.get("resume_path", "resume.pdf")
     resume_path = root_dir / resume_path_str if not Path(resume_path_str).is_absolute() else Path(resume_path_str)
@@ -522,19 +563,21 @@ def score_single_job(job: dict, cfg: dict, store: Store, root_dir: Path) -> tupl
     target_seniority = candidate_cfg.get("seniority", "junior")
     target_locations = geo.target_locations(cfg)
 
-    candidate_years = None
-    if (root_dir / ".resume_details.json").exists():
-        try:
-            c_det = json.loads((root_dir / ".resume_details.json").read_text(encoding="utf-8"))
-            candidate_years = c_det.get("years_of_experience")
-        except Exception:
-            pass
+    cand_details = get_candidate_details(cfg, root_dir)
+    candidate_years = cand_details.get("years_of_experience")
+    target_seniority = cand_details.get("seniority") or candidate_cfg.get("seniority", "junior")
+    target_locations = cand_details.get("target_locations") or geo.target_locations(cfg)
 
     # -------------------------------------------------------------
     # Pass 1: Fast Deterministic Triage (0 AI Tokens)
     # -------------------------------------------------------------
     from .localmatch import triage_job
-    triage_res = triage_job(job, candidate_years=candidate_years, target_locations=target_locations)
+    triage_res = triage_job(
+        job,
+        candidate_years=candidate_years,
+        candidate_seniority=target_seniority,
+        target_locations=target_locations,
+    )
     if triage_res is not None:
         sc, rsn, bd = triage_res
         store.save_score(job["id"], sc, rsn, bd)

@@ -194,27 +194,25 @@ DISQUALIFIED_NON_TECH_PATTERNS = [
     re.compile(r"\b(?:office\s+assistant|sales\s+executive|sales\s+representative|business\s+development\s+associate)\b", re.I),
 ]
 
-DISQUALIFIED_TECH_PATTERNS = [
-    re.compile(r"\b(?:wordpress\s+developer|php\s+developer|drupal|magento)\b", re.I),
-    re.compile(r"\b(?:sap\s+abap|salesforce\s+admin(?:istrator)?)\b", re.I),
-]
-
 
 def triage_job(
     job: dict,
-    candidate_years: float | None = 1.0,
+    candidate_years: float | None = None,
+    candidate_seniority: str = "junior",
+    candidate_skills: set[str] | list[str] | None = None,
     target_locations: list[str] | None = None,
 ) -> tuple[int, str, dict] | None:
     """Pass 1: Deterministic Triage (0 AI Tokens).
 
     Returns (score, reason, breakdown) if definitely disqualified by rule,
     or None if the job is eligible for Pass 2 (Deep Semantic Evaluation with LLM).
+    All evaluations are strictly relative to the candidate's verified profile.
     """
     title = (job.get("title") or "").strip()
     desc = (job.get("description") or "").strip()
     title_lower = title.lower()
 
-    from .seniority import extract_required_years, is_senior_title, is_fresher_only
+    from .seniority import extract_required_years, is_senior_title, is_junior_title, is_fresher_only
     from .salary import extract_salary
     from .deadline import extract_deadline
 
@@ -222,7 +220,7 @@ def triage_job(
     sal_min, sal_max, sal_curr, sal_text = extract_salary(f"{title} {desc}")
     dead_at, dead_text = extract_deadline(f"{title} {desc}")
 
-    # 1. Non-technical disqualifiers (unless title also contains software/engineer/developer/analyst)
+    # 1. Non-technical disqualifiers (unless title also contains software/engineer/developer/architect/scientist)
     is_eng = any(k in title_lower for k in ("software", "developer", "engineer", "programmer", "architect", "data scientist"))
     if not is_eng:
         for pat in DISQUALIFIED_NON_TECH_PATTERNS:
@@ -235,57 +233,64 @@ def triage_job(
                         "matched_skills": [],
                         "missing_skills": ["Software Engineering"],
                         "seniority_fit": "Non-technical position",
-                        "advice": "Role does not match candidate engineering profile.",
+                        "advice": "Role does not match technical engineering qualifications.",
                         "salary_min": sal_min, "salary_max": sal_max, "salary_currency": sal_curr, "salary_text": sal_text,
                         "deadline_at": dead_at, "deadline_text": dead_text,
                     }
                 )
 
-    # 2. Seniority disqualifiers: 4+ years required or Principal/Director/Staff/VP
+    # 2. Seniority & Experience alignment based entirely on candidate's verified background
     req_years = extract_required_years(desc, title=title_lower)
-    if is_senior_title(title_lower) or (req_years is not None and req_years >= 4.0):
-        return (
-            2,
-            f"triage: requires {req_years:g}+ yrs exp" if req_years else "triage: senior/lead title",
-            {
-                "skills": 35, "seniority": 15, "location": 100, "domain": 40, "recency": 100, "reach": 30,
-                "matched_skills": [],
-                "missing_skills": [f"{req_years:g}+ years of experience" if req_years else "Senior experience"],
-                "seniority_fit": f"Seniority gap (requires {req_years:g}+ yrs; candidate has {candidate_years or 1.0:g} yr)",
-                "advice": "Senior/Lead role requiring significantly more years of experience.",
-                "salary_min": sal_min, "salary_max": sal_max, "salary_currency": sal_curr, "salary_text": sal_text,
-                "deadline_at": dead_at, "deadline_text": dead_text,
-            }
-        )
+    mode = (candidate_seniority or "junior").lower().strip()
+    cand_is_junior = mode in ("intern", "junior", "entry") or (candidate_years is not None and candidate_years <= 2.5)
+    cand_is_senior = mode in ("senior", "lead", "staff", "principal") or (candidate_years is not None and candidate_years >= 5.0)
 
-    # 3. Campus/student freshers only drive (when candidate already has full-time exp)
-    if (candidate_years is not None and candidate_years >= 0.5) and is_fresher_only(title_lower, desc):
-        return (
-            2,
-            "triage: campus/student drive only",
-            {
-                "skills": 40, "seniority": 20, "location": 100, "domain": 50, "recency": 100, "reach": 100,
-                "matched_skills": [],
-                "missing_skills": ["College student status"],
-                "seniority_fit": "Role strictly reserved for campus/student batches",
-                "advice": "Candidate is an active professional engineer, not a campus fresher.",
-                "salary_min": sal_min, "salary_max": sal_max, "salary_currency": sal_curr, "salary_text": sal_text,
-                "deadline_at": dead_at, "deadline_text": dead_text,
-            }
-        )
-
-    # 4. Out-of-scope tech stacks (pure PHP/WordPress, pure SAP ABAP)
-    for pat in DISQUALIFIED_TECH_PATTERNS:
-        if pat.search(title_lower):
+    if cand_is_junior:
+        # For junior profiles: Disqualify roles requiring >= 5 years or senior leadership titles
+        if is_senior_title(title_lower) or (req_years is not None and req_years >= 5.0):
+            cand_str = f"candidate profile has {candidate_years:g} yrs" if candidate_years is not None else "junior profile"
             return (
                 2,
-                "triage: non-matching tech stack",
+                f"triage: requires {req_years:g}+ yrs exp" if req_years else "triage: senior/lead title",
                 {
-                    "skills": 20, "seniority": 50, "location": 100, "domain": 20, "recency": 100, "reach": 100,
+                    "skills": 35, "seniority": 15, "location": 100, "domain": 40, "recency": 100, "reach": 30,
                     "matched_skills": [],
-                    "missing_skills": [title],
-                    "seniority_fit": "Stack misalignment",
-                    "advice": "Core stack is outside target backend/fullstack domains.",
+                    "missing_skills": [f"{req_years:g}+ years of experience" if req_years else "Senior experience"],
+                    "seniority_fit": f"Seniority gap (requires {req_years:g}+ yrs; {cand_str})" if req_years else f"Senior title exceeds {cand_str}",
+                    "advice": "Senior/Lead role requiring significantly more years of experience.",
+                    "salary_min": sal_min, "salary_max": sal_max, "salary_currency": sal_curr, "salary_text": sal_text,
+                    "deadline_at": dead_at, "deadline_text": dead_text,
+                }
+            )
+
+        # Strictly campus / student drives if candidate already has verified full-time industry experience
+        if (candidate_years is not None and candidate_years >= 0.5) and is_fresher_only(title_lower, desc):
+            return (
+                2,
+                "triage: campus/student drive only",
+                {
+                    "skills": 40, "seniority": 20, "location": 100, "domain": 50, "recency": 100, "reach": 100,
+                    "matched_skills": [],
+                    "missing_skills": ["Enrolled student status"],
+                    "seniority_fit": "Role strictly reserved for campus/student batches",
+                    "advice": "Candidate has industry experience; position is restricted to students.",
+                    "salary_min": sal_min, "salary_max": sal_max, "salary_currency": sal_curr, "salary_text": sal_text,
+                    "deadline_at": dead_at, "deadline_text": dead_text,
+                }
+            )
+
+    elif cand_is_senior:
+        # For senior engineers: Disqualify low-level internships or student trainee roles
+        if is_junior_title(title_lower) or is_fresher_only(title_lower, desc) or (req_years is not None and req_years <= 1.0):
+            return (
+                2,
+                "triage: entry/intern role for senior profile",
+                {
+                    "skills": 50, "seniority": 20, "location": 100, "domain": 50, "recency": 100, "reach": 100,
+                    "matched_skills": [],
+                    "missing_skills": ["Entry-level career stage"],
+                    "seniority_fit": "Entry-level/intern role unsuitable for senior engineer profile",
+                    "advice": "Role seniority is below candidate's experienced career level.",
                     "salary_min": sal_min, "salary_max": sal_max, "salary_currency": sal_curr, "salary_text": sal_text,
                     "deadline_at": dead_at, "deadline_text": dead_text,
                 }

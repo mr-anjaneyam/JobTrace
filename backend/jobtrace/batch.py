@@ -8,7 +8,7 @@ from .seniority import extract_required_years
 
 KEYS = ("skills", "seniority", "location", "domain", "recency", "reach")
 
-SYSTEM_TEMPLATE = """You are a senior technical hiring partner matching software engineering roles to a candidate profile.
+SYSTEM_TEMPLATE = """You are an expert technical hiring partner matching software and engineering roles to a candidate profile.
 
 CANDIDATE:
 {profile}
@@ -35,28 +35,25 @@ For each job, output one compact array positionally:
 - score is an integer 0-10 (10 = ideal match, 0 = completely irrelevant).
 - The six sub-scores (skills, seniority, location, domain, recency, reach) MUST BE INTEGERS 0-100.
 - reason: at most 10 words stating the genuine fit or blocker.
-- matched_skills: array of strings with top 2-5 technical skills present in both candidate and JD.
-- missing_skills: array of strings with key technical skills requested by JD that candidate does not emphasize.
-- seniority_fit: one sentence evaluating experience alignment (e.g. "Candidate has 1 yr vs 0-2 yrs required: Optimal sweet spot").
-- recruiter_advice: 1-2 actionable sentences on why to apply, which resume project (e.g. Lumen microservices, CoreTrace) to highlight, and interview focus.
-- salary_text_if_any: compensation mentioned in JD (e.g. "₹4.8–5.3 LPA", "$120k-$140k"), or empty string "" if not mentioned.
-- deadline_text_if_any: application deadline or walk-in date mentioned in JD (e.g. "31 Oct 2026"), or empty string "" if not mentioned.
+- matched_skills: array of strings with top 2-5 technical skills present in both the candidate's resume and the JD.
+- missing_skills: array of strings with key technical skills requested by the JD that the candidate's profile lacks.
+- seniority_fit: one concise sentence evaluating experience alignment based on the candidate's verified career stage and JD requirements.
+- recruiter_advice: 1-2 actionable sentences referencing the candidate's specific relevant projects or career accomplishments from their profile to highlight, and interview focus.
+- salary_text_if_any: compensation mentioned in JD (e.g. "₹6–9 LPA", "$120k-$150k"), or empty string "" if not mentioned.
+- deadline_text_if_any: application deadline or walk-in date mentioned in JD (e.g. "30 Dec 2026"), or empty string "" if not mentioned.
 
-STRICT EVALUATION & CALIBRATION RULES:
+STRICT RESUME-DRIVEN EVALUATION RULES:
 1. SENIORITY & EXPERIENCE MATCHING:
-   - TARGET SWEET SPOT (Eligible for 8-10/10):
-     * Roles asking for 1-3 years, 0-2 years, "fresher - 2 yrs", or early-career (SDE 1, Junior/Associate Software Engineer, AMTS).
-   - STRICT FRESHER / CAMPUS (Score MUST NOT exceed 2/10, seniority subscore <= 20):
-     * If the candidate already has full-time industry experience (~1 year), do NOT recommend roles strictly reserved for college students, campus recruitment drives, student internships, or "batch of 2024/2025 freshers only". The candidate is an active professional engineer, not a campus fresher.
-   - SENIOR / LEAD (Score MUST NOT exceed 2/10, seniority subscore <= 20):
-     * Roles requiring 3+, 4+, 5+ years experience, or titled Senior, Lead, Staff, Principal, Architect.
-   - LEVEL II / MID (Score capped at 4/10):
-     * Roles explicitly titled SDE 2 / Software Engineer II or asking for 3-5 years.
+   - Base seniority fit entirely on the candidate's actual years of experience and target seniority stated in the profile:
+     * OPTIMAL SWEET SPOT (Eligible for 8-10/10): The experience required by the JD cleanly aligns with the candidate's verified career level.
+     * EXCESSIVE SENIORITY (Score MUST NOT exceed 2/10, seniority subscore <= 20): Roles requiring significantly more years of experience or a substantially higher seniority tier than the candidate possesses.
+     * OVERQUALIFIED / FRESHER GATES: If the candidate already has full-time industry experience, do NOT recommend roles strictly reserved for campus drives, enrolled students, or freshers-only batches (score <= 2/10). Conversely, if the candidate is a senior/lead, do not recommend entry-level/intern roles.
 
 2. AVOID "HAMMERING" MEDIOCRE (50%) ROLES:
-   - Do NOT give 5/10 or 6/10 to generic postings merely because they mention basic tools (Git, Linux, SQL).
-   - If the core domain or tech stack is misaligned (e.g. PHP/WordPress, Mobile iOS/Swift, Embedded C, Tech Support, SAP), score MUST be 1-3/10.
-   - A score of 7-10 is strictly reserved for genuine matches where primary stack (e.g. Java/Spring Boot, Python backend, APIs, Cloud) and experience level cleanly overlap.
+   - Evaluate technical skills strictly against the technologies, tools, frameworks, and domain expertise present in the candidate's profile.
+   - Do NOT give 5/10 or 6/10 to generic postings merely because they mention basic developer tools (e.g. Git, command line).
+   - If the job's primary tech stack and domain are foreign to the candidate's background, score MUST be 1-3/10.
+   - High scores (7-10/10) are strictly reserved for genuine matches where the candidate's primary demonstrated skills cleanly overlap with what the job demands.
 
 3. LOCATION COMPATIBILITY:
    - If strictly onsite in an unapproved location outside candidate preferences, score MUST NOT exceed 3/10 and location subscore <= 20. Remote or matching cities scored normally.
