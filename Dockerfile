@@ -20,7 +20,8 @@ RUN apt-get update \
 
 WORKDIR /app
 COPY backend/requirements.txt backend/requirements.txt
-RUN pip install --no-cache-dir -r backend/requirements.txt
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir -r backend/requirements.txt
 
 COPY backend/ backend/
 COPY config.example.yaml .env.example ./

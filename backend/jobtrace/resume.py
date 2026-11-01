@@ -24,17 +24,17 @@ def extract_text(path: str | Path) -> str:
 
     if p.suffix.lower() == ".pdf":
         try:
-            import pymupdf
-            doc = pymupdf.open(str(p))
-            return "\n".join(page.get_text() for page in doc)
-        except ImportError:
-            pass
-        try:
             from pypdf import PdfReader
             reader = PdfReader(str(p))
             return "\n".join(page.extract_text() or "" for page in reader.pages)
+        except ImportError:
+            pass
+        try:
+            import pymupdf
+            doc = pymupdf.open(str(p))
+            return "\n".join(page.get_text() for page in doc)
         except ImportError as e:
-            raise RuntimeError("Install pymupdf or pypdf to read PDF resumes (`pip install pymupdf`)") from e
+            raise RuntimeError("Install pypdf to read PDF resumes (`pip install pypdf`)") from e
     if p.suffix.lower() == ".docx":
         return _docx_text(p)
     return p.read_text(encoding="utf-8", errors="replace")
