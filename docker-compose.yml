@@ -19,7 +19,7 @@ services:
     <<: *jobtrace
     ports:
       # Loopback only: the API has no authentication. Change to "8000:8000" only behind a trusted proxy.
-      - "127.0.0.1:${JOBTRACE_PORT:-8000}:8000"
+      - "${JOBTRACE_PORT:-8000}:8000"
 
   # Daily alerts at 09:30 and the weekly digest on Mondays, using the same data volume.
   scheduler:
