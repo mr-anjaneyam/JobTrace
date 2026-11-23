@@ -41,3 +41,5 @@ node_modules/
 dist/
 .vite/
 .scan.lock
+frontend/test-results/
+frontend/playwright-report/

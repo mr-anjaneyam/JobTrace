@@ -1,0 +1,100 @@
+/* A slim strip along the bottom edge. It reuses the existing white floating-UI look. */
+.has-timeline { --tl-h: calc(45px + env(safe-area-inset-bottom, 0px)); }
+
+.job-timeline {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 30;
+  box-sizing: border-box;
+  height: var(--tl-h);
+  padding: 0 12px env(safe-area-inset-bottom, 0px);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(255, 255, 255, 0.97);
+  border-top: 1px solid rgba(0, 0, 0, 0.08);
+  color: #0f172a;
+  font-size: 12px;
+}
+
+.job-timeline button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  flex-shrink: 0;
+  height: 44px;
+  min-width: 44px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s;
+}
+.job-timeline button:hover:not(:disabled) { background: #f1f5f9; color: #0f172a; }
+.job-timeline button:disabled { opacity: 0.45; cursor: default; }
+.job-timeline .timeline-live { padding: 0 10px; }
+.job-timeline .timeline-live.is-live { color: #059669; }
+.job-timeline :focus-visible { outline: 2px solid #059669; outline-offset: -2px; }
+
+.timeline-label { display: flex; align-items: baseline; gap: 8px; flex-shrink: 0; min-width: 150px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.timeline-label strong { font-weight: 600; }
+.timeline-count { color: #64748b; }
+
+.timeline-track { position: relative; flex: 1; min-width: 0; height: 44px; }
+.timeline-track input {
+  appearance: none;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 44px;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+}
+.timeline-track input::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; background: linear-gradient(to right, #059669 var(--timeline-progress), #e2e8f0 var(--timeline-progress)); }
+.timeline-track input::-webkit-slider-thumb { appearance: none; width: 14px; height: 14px; margin-top: -5px; border: 2px solid #ffffff; border-radius: 50%; background: #059669; box-shadow: 0 1px 4px rgba(15, 23, 42, 0.3); transition: transform 0.15s; }
+.timeline-track input:hover::-webkit-slider-thumb { transform: scale(1.2); }
+.timeline-track input::-moz-range-track { height: 4px; border-radius: 2px; background: #e2e8f0; }
+.timeline-track input::-moz-range-progress { height: 4px; border-radius: 2px; background: #059669; }
+.timeline-track input::-moz-range-thumb { width: 10px; height: 10px; border: 2px solid #ffffff; border-radius: 50%; background: #059669; box-shadow: 0 1px 4px rgba(15, 23, 42, 0.3); }
+
+.job-feed-error { position: absolute; z-index: 60; top: 12px; left: 50%; transform: translateX(-50%); width: min(500px, calc(100% - 24px)); padding: 8px 12px; background: var(--card); border: 1px solid var(--clay); border-radius: 8px; display: flex; gap: 12px; align-items: center; }
+.job-feed-error button { min-height: 44px; padding: 0 12px; color: var(--foreground); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; }
+
+/* Lift the existing bottom controls by the height of the strip; their layout is otherwise unchanged. */
+.has-timeline .gmap-ctrl-cluster,
+.has-timeline .gmap-explore-trigger-wrap,
+.has-timeline .gmap-status-cluster { bottom: calc(24px + var(--tl-h)); }
+.has-timeline .gmap-scale-cluster { bottom: calc(20px + var(--tl-h)); }
+.has-timeline .corner-bottom-left,
+.has-timeline .corner-bottom-right { bottom: calc(68px + var(--tl-h)); }
+
+@media (max-width: 768px) {
+  .has-timeline .gmap-explore-trigger-wrap { bottom: calc(16px + var(--tl-h)); }
+  .has-timeline .gmap-status-cluster { bottom: calc(64px + var(--tl-h)); }
+  .has-timeline .corner-bottom-left,
+  .has-timeline .corner-bottom-right { bottom: calc(58px + var(--tl-h)); }
+  .has-timeline .gmap-place-card { bottom: calc(12px + var(--tl-h)); }
+  .timeline-label { min-width: 0; }
+  .timeline-count { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .has-timeline .gmap-pin,
+  .job-timeline button,
+  .timeline-track input::-webkit-slider-thumb { transition: none; }
+}
+
+/* Short landscape screens: keep the vertical control stack clear of the search area */
+@media (max-height: 600px) and (min-width: 700px) {
+  .has-timeline .gmap-ctrl-cluster { flex-direction: row; bottom: calc(12px + var(--tl-h)); }
+  .has-timeline .gmap-ctrl-divider { display: none; }
+  .has-timeline .gmap-explore-trigger-wrap { bottom: calc(12px + var(--tl-h)); left: 12px; right: auto; transform: none; }
+  .has-timeline .gmap-radar-status-badge { display: none; }
+}

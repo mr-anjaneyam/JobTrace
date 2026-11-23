@@ -10,6 +10,7 @@ export interface ApiJob {
   source: string;
   breakdown?: string | Record<string, any>;
   first_seen?: number;
+  last_seen?: number;
   posted_at?: number;
   description?: string;
   closed_at?: number | null;
@@ -18,6 +19,8 @@ export interface ApiJob {
   salary_max?: number;
   deadline_at?: number;
   deadline_text?: string;
+  expires_at?: number | null;
+  periods?: { opened_at: number; closed_at: number | null }[];
 }
 
 export interface ApiStateResponse {
@@ -33,6 +36,12 @@ export interface ApiStateResponse {
   };
   scanning: boolean;
   scoring: boolean;
+  timeline?: {
+    start: number;
+    end: number;
+    jobs: ApiJob[];
+    truncated: boolean;
+  };
 }
 
 export interface ApiProfile {
@@ -136,8 +145,8 @@ export interface TelegramChat {
 }
 
 export const api = {
-  async getState(): Promise<ApiStateResponse> {
-    const res = await fetch('/api/state');
+  async getState(history = false, signal?: AbortSignal): Promise<ApiStateResponse> {
+    const res = await fetch(history ? '/api/state?history=true' : '/api/state', { signal, cache: 'no-store' });
     if (!res.ok) throw new Error(`HTTP ${res.status} fetching state`);
     return res.json();
   },
@@ -234,7 +243,7 @@ export const api = {
     return res.json();
   },
 
-  async verifyJob(id: string): Promise<{ ok: boolean; active: boolean; reason: string; url?: string }> {
+  async verifyJob(id: string): Promise<{ ok: boolean; active: boolean; verified?: boolean; reason: string; url?: string }> {
     const res = await fetch(`/api/jobs/${encodeURIComponent(id)}/verify`);
     if (!res.ok) throw new Error(`HTTP ${res.status} verifying job`);
     return res.json();

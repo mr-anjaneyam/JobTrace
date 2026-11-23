@@ -31,7 +31,9 @@ export interface MapPlaceCardProps {
   onToggleSave: (id: string) => void;
   isComparing: boolean;
   onToggleCompare: (id: string) => void;
-  onDiscard?: (id: string) => void;
+  onDiscard?: (id: string) => void | Promise<void>;
+  onVerifiedClosed?: (id: string) => void;
+  historical?: boolean;
   state?: 'open' | 'closed';
 }
 
@@ -43,6 +45,8 @@ export function MapPlaceCard({
   isComparing,
   onToggleCompare,
   onDiscard,
+  onVerifiedClosed,
+  historical = false,
   state = 'open',
 }: MapPlaceCardProps) {
   const [expandedDesc, setExpandedDesc] = useState(false);
@@ -63,6 +67,10 @@ export function MapPlaceCard({
       setLiveness({ status: 'idle' });
       return;
     }
+    if (historical) {
+      setLiveness({ status: 'idle', reason: 'Historical opening; availability may have changed.' });
+      return;
+    }
 
     let isMounted = true;
     setLiveness({ status: 'checking', reason: 'Checking listing availability...' });
@@ -70,21 +78,26 @@ export function MapPlaceCard({
     api.verifyJob(job.id)
       .then((res) => {
         if (!isMounted) return;
-        if (res.active) {
+        if (!res.ok) throw new Error('Could not verify this job.');
+        if (res.active && res.verified !== false) {
           setLiveness({ status: 'active', reason: res.reason || 'Verified active on board' });
-        } else {
+        } else if (!res.active) {
           setLiveness({ status: 'archived', reason: res.reason || 'Listing has been archived or closed' });
+          onVerifiedClosed?.(job.id);
+        } else {
+          setLiveness({ status: 'idle', reason: res.reason });
         }
       })
-      .catch(() => {
+      .catch((error) => {
         if (!isMounted) return;
-        setLiveness({ status: 'idle' });
+        console.error('Could not verify job:', error);
+        setLiveness({ status: 'idle', reason: 'Verification unavailable; try again later.' });
       });
 
     return () => {
       isMounted = false;
     };
-  }, [job?.id]);
+  }, [job?.id, historical, onVerifiedClosed]);
 
   useEffect(() => {
     if (expandedDesc && job && !fullDesc) {
@@ -121,7 +134,7 @@ export function MapPlaceCard({
     setDiscarding(true);
     try {
       if (onDiscard) {
-        onDiscard(job.id);
+        await onDiscard(job.id);
       } else {
         await api.discardJob(job.id);
         onClose();
@@ -264,6 +277,9 @@ export function MapPlaceCard({
 
       {/* Google Maps Place Action Buttons (Executive 2-tier layout) */}
       <div className="place-actions-shell">
+        {liveness.status === 'idle' && liveness.reason && (
+          <p className="px-4 py-2 text-sm text-muted-foreground" role="status">{liveness.reason}</p>
+        )}
         {/* Tier 1: Primary Actions (Apply + Shortlist) */}
         <div className="place-actions-primary">
           {job.url && job.url !== '#' && (
@@ -275,7 +291,7 @@ export function MapPlaceCard({
               title={liveness.status === 'archived' ? 'Warning: Listing appears archived on provider' : 'Open application URL in new tab'}
             >
               <ExternalLink size={15} />
-              <span>{liveness.status === 'archived' ? 'Archived on Provider' : `Apply on ${job.company}`}</span>
+              <span>{historical ? 'View original posting' : liveness.status === 'archived' ? 'Archived on Provider' : `Apply on ${job.company}`}</span>
             </a>
           )}
 

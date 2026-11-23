@@ -346,10 +346,16 @@ export function positionMarkers(
   yAxis: MapAxis,
   width: number,
   height: number,
-  maxPins = 150
+  maxPins = 150,
+  previousPositions?: Map<string, { px: number; py: number }>
 ) {
   const placed: { job: Job; x: number; y: number; px: number; py: number; trueX: number; trueY: number }[] = [];
   const slice = data.slice(0, maxPins);
+  // Dots already on the map keep their spot so scrubbing the timeline never shuffles them
+  const reserved = slice.flatMap((job) => {
+    const point = previousPositions?.get(job.id);
+    return point ? [point] : [];
+  });
 
   // Safe area padding to prevent markers from being placed off-screen or under toolbars
   const padLeft = 40;
@@ -367,6 +373,11 @@ export function positionMarkers(
     const trueY = padTop + ((100 - y) / 100) * innerHeight;
     let px = Math.max(padLeft, Math.min(width - padRight, trueX));
     let py = Math.max(padTop, Math.min(height - padBottom, trueY));
+    const previous = previousPositions?.get(job.id);
+    if (previous) {
+      placed.push({ job, x, y, px: previous.px, py: previous.py, trueX, trueY });
+      continue;
+    }
 
     // Avoid initial overlap with the floating top-left Omnibox card (x < 460 && y < 115)
     if (px < 460 && py < 115) {
@@ -376,10 +387,11 @@ export function positionMarkers(
     const MIN_DIST = 56;
     const MIN_DIST_SQ = 3136; // 56 * 56
 
+    const obstacles = [...placed, ...reserved];
     for (let attempt = 0; attempt < 35; attempt++) {
       let collidesWithPlaced = false;
-      for (let i = placed.length - 1; i >= 0; i--) {
-        const p = placed[i];
+      for (let i = obstacles.length - 1; i >= 0; i--) {
+        const p = obstacles[i];
         const dx = p.px - px;
         const dy = p.py - py;
         if (Math.abs(dx) < MIN_DIST && Math.abs(dy) < MIN_DIST) {

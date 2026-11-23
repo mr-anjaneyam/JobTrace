@@ -7,6 +7,8 @@ export interface MapStatusPillProps {
   onOpenCompare: () => void;
   isScanning: boolean;
   scanStatus: string | null;
+  historical?: boolean;
+  stale?: boolean;
 }
 
 export function MapStatusPill({
@@ -16,6 +18,8 @@ export function MapStatusPill({
   onOpenCompare,
   isScanning,
   scanStatus,
+  historical = false,
+  stale = false,
 }: MapStatusPillProps) {
   return (
     <div className="gmap-status-cluster gmap-ui-floating">
@@ -43,7 +47,7 @@ export function MapStatusPill({
             </span>
           ) : (
             <>
-              <strong>JobTrace Live</strong>
+              <strong>{stale ? 'Updates paused' : historical ? 'JobTrace History' : 'JobTrace Live'}</strong>
               <span className="status-separator">·</span>
               <span>{totalCount} Active</span>
               <span className="status-separator">·</span>

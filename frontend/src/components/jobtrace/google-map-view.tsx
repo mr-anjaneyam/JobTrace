@@ -50,6 +50,7 @@ interface MapPinMarkerProps {
   index: number;
   onSelect: (id: string) => void;
   onHover: (marker: { job: Job; px: number; py: number; x: number; y: number } | null) => void;
+  exiting?: boolean;
 }
 
 const MapPinMarker = memo(function MapPinMarker({
@@ -62,6 +63,7 @@ const MapPinMarker = memo(function MapPinMarker({
   index,
   onSelect,
   onHover,
+  exiting = false,
 }: MapPinMarkerProps) {
   const { job, px, py, x, y } = marker;
 
@@ -87,11 +89,20 @@ const MapPinMarker = memo(function MapPinMarker({
           '--pin-delay': `${Math.min(index * 14, 700)}ms`,
         } as CSSProperties
       }
-      onClick={handleClick}
-      onMouseEnter={handleMouseEnter}
+      data-job-id={job.id}
+      data-state={exiting ? 'closed' : 'open'}
+      aria-hidden={exiting || undefined}
+      onClick={exiting ? undefined : handleClick}
+      onMouseEnter={exiting ? undefined : handleMouseEnter}
+      onKeyDown={(event) => {
+        if (!exiting && (event.key === 'Enter' || event.key === ' ')) {
+          event.preventDefault();
+          onSelect(job.id);
+        }
+      }}
       onMouseLeave={handleMouseLeave}
       role="button"
-      tabIndex={0}
+      tabIndex={exiting ? -1 : 0}
       aria-label={`${job.company} - ${job.title}`}
     >
       <div className="pin-anchor" style={{ transform: 'translate(-50%, -50%) scale(var(--pin-scale, 1))' }}>
@@ -216,16 +227,45 @@ export const GoogleMapView = memo(function GoogleMapView({
   }, []);
 
   // Compute positioned markers with collision avoidance in World Coordinates
+  const positionCache = useRef<{ key: string; points: Map<string, { px: number; py: number }> }>({
+    key: '', points: new Map(),
+  });
   const markers = useMemo(() => {
-    const placed = positionMarkers(jobs, xAxis, yAxis, MATRIX_W, MATRIX_H, MAX_MAP_PINS);
-    return placed.map((m) => ({
-      ...m,
-      px: matrixOriginX + m.px,
-      py: matrixOriginY + m.py,
-      trueX: matrixOriginX + m.trueX,
-      trueY: matrixOriginY + m.trueY,
-    }));
+    const key = `${xAxis}:${yAxis}:${MATRIX_W}:${MATRIX_H}`;
+    if (positionCache.current.key !== key) positionCache.current = { key, points: new Map() };
+    const placed = positionMarkers(jobs, xAxis, yAxis, MATRIX_W, MATRIX_H, MAX_MAP_PINS, positionCache.current.points);
+    return placed.map((m) => {
+      const point = positionCache.current.points.get(m.job.id) ?? { px: m.px, py: m.py };
+      positionCache.current.points.set(m.job.id, point);
+      return {
+        ...m,
+        px: matrixOriginX + point.px,
+        py: matrixOriginY + point.py,
+        trueX: matrixOriginX + m.trueX,
+        trueY: matrixOriginY + m.trueY,
+      };
+    });
   }, [jobs, xAxis, yAxis, MATRIX_W, MATRIX_H, matrixOriginX, matrixOriginY]);
+
+  // Keep dots that just expired on screen long enough to fade out
+  type DisplayMarker = (typeof markers)[number] & { exitAt?: number };
+  const [displayMarkers, setDisplayMarkers] = useState<DisplayMarker[]>(markers);
+  useEffect(() => {
+    const ids = new Set(markers.map((m) => m.job.id));
+    setDisplayMarkers((previous) => [
+      ...markers,
+      ...previous.filter((m) => !ids.has(m.job.id)).map((m) => ({ ...m, exitAt: m.exitAt ?? performance.now() + 240 })),
+    ]);
+    setTooltipJob((current) => (current && !ids.has(current.job.id) ? null : current));
+  }, [markers]);
+  useEffect(() => {
+    const next = Math.min(...displayMarkers.filter((m) => m.exitAt !== undefined).map((m) => m.exitAt!));
+    if (!Number.isFinite(next)) return;
+    const timer = window.setTimeout(() => {
+      setDisplayMarkers((current) => current.filter((m) => m.exitAt === undefined || m.exitAt > performance.now()));
+    }, Math.max(0, next - performance.now()) + 1);
+    return () => window.clearTimeout(timer);
+  }, [displayMarkers]);
 
   const xLabel = mapAxes.find((a) => a.value === xAxis)?.label || 'Technical Fit';
   const yLabel = mapAxes.find((a) => a.value === yAxis)?.label || 'Company Relevance';
@@ -606,7 +646,7 @@ export const GoogleMapView = memo(function GoogleMapView({
                 </div>
 
                 {/* Job Location Pins - Each pin is memoized for instant 60fps responsiveness */}
-                {markers.map((m, i) => {
+                {displayMarkers.map((m, i) => {
                   const quad = mapQuadrant(m.x, m.y, threshold);
                   const isSelected = selectedId === m.job.id;
                   const isHovered = tooltipJob?.job.id === m.job.id;
@@ -625,6 +665,7 @@ export const GoogleMapView = memo(function GoogleMapView({
                       index={i}
                       onSelect={handleSelectJob}
                       onHover={handleHoverMarker}
+                      exiting={m.exitAt !== undefined}
                     />
                   );
                 })}

@@ -10,7 +10,10 @@ import {
 } from '@/lib/jobs';
 import { useWorkspace } from '@/hooks/use-workspace';
 import { usePresence } from '@/hooks/use-presence';
-import { api, type ApiJob, type ApiStateResponse } from '@/lib/api';
+import { useJobFeed } from '@/hooks/use-job-feed';
+import { api, type ApiJob } from '@/lib/api';
+import { isJobActiveAt } from '@/lib/timeline';
+import { JobTimeline } from './job-timeline';
 import { GoogleMapView } from './google-map-view';
 import { MapOmnibox } from './map-omnibox';
 import { MapPlaceCard } from './map-place-card';
@@ -20,13 +23,19 @@ const CompareDialog = lazy(() => import('./compare-dialog').then((m) => ({ defau
 import { UserProfileDialog } from './userprofile-dialog';
 import { SettingsDialog } from './settings-dialog';
 
+const NO_JOBS: ApiJob[] = [];
+
 export function Dashboard({
   initialRoute = '/',
 }: {
   initialRoute?: string;
 }) {
   const { state: ws, patch, newDays } = useWorkspace();
-  const [rawJobs, setRawJobs] = useState<ApiJob[]>([]);
+  const feed = useJobFeed();
+  const rawJobs = feed.data?.timeline?.jobs ?? NO_JOBS;
+  const loadState = feed.refresh;
+  const [timelineTime, setTimelineTime] = useState<number | null>(null);
+  const [operationError, setOperationError] = useState<string | null>(null);
   const [scanning, setScanning] = useState(false);
   const [scanStatus, setScanStatus] = useState<string | null>(null);
 
@@ -72,20 +81,9 @@ export function Dashboard({
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
 
-  // Fetch live state from backend
-  const loadState = async () => {
-    try {
-      const res: ApiStateResponse = await api.getState();
-      setRawJobs(res.jobs || []);
-      setScanning(res.scanning || false);
-    } catch (e) {
-      console.error('Failed to load state from JobTrace API:', e);
-    }
-  };
-
   useEffect(() => {
-    loadState();
-  }, []);
+    if (feed.data) setScanning(feed.data.scanning);
+  }, [feed.data?.scanning]);
 
   // Full-text (FTS5) search across titles, companies, locations and descriptions
   const [ftsIds, setFtsIds] = useState<Set<string> | null>(null);
@@ -110,6 +108,15 @@ export function Dashboard({
   const allJobs: Job[] = useMemo(() => {
     return rawJobs.map(transformApiJob);
   }, [rawJobs]);
+  const visibleIds = useMemo(() => new Set(
+    rawJobs.filter((job) => isJobActiveAt(job, timelineTime ?? feed.now)).map((job) => job.id)
+  ), [rawJobs, timelineTime, feed.now]);
+  const visibleJobs = useMemo(() => allJobs.filter((job) => visibleIds.has(job.id)), [allJobs, visibleIds]);
+
+  useEffect(() => {
+    if (selectedId && !visibleIds.has(selectedId)) setSelectedId(null);
+    if (hoveredId && !visibleIds.has(hoveredId)) setHoveredId(null);
+  }, [visibleIds, selectedId, hoveredId]);
 
   // Dynamic sources
   const sources = useMemo(() => {
@@ -120,7 +127,7 @@ export function Dashboard({
   const baseFiltered = useMemo(() => {
     // FTS ids cover full descriptions; fall back to client-side title/company match until they arrive
     const useFts = ws.search.trim() !== '' && ftsIds !== null;
-    let result = filterJobs(allJobs, {
+    let result = filterJobs(visibleJobs, {
       search: useFts ? '' : ws.search,
       seniority: ws.seniority,
       location: ws.location,
@@ -134,7 +141,7 @@ export function Dashboard({
       result = result.filter((j) => ftsIds.has(j.id));
     }
     return result;
-  }, [allJobs, ws.search, ws.seniority, ws.location, ws.minimum, ws.saved, ws.shortlistOnly, ws.source, ftsIds]);
+  }, [visibleJobs, ws.search, ws.seniority, ws.location, ws.minimum, ws.saved, ws.shortlistOnly, ws.source, ftsIds]);
 
   const filteredJobs = useMemo(() => {
     if (selectedQuadrant === 'all') return baseFiltered;
@@ -152,8 +159,8 @@ export function Dashboard({
   const deferredFilteredJobs = useDeferredValue(filteredJobs);
 
   const selectedJob = useMemo(() => {
-    return allJobs.find((j) => j.id === selectedId) || null;
-  }, [allJobs, selectedId]);
+    return visibleJobs.find((j) => j.id === selectedId) || null;
+  }, [visibleJobs, selectedId]);
 
   const isNew = useCallback((job: Job) => newDays >= 0 && isNewSince(job, newDays), [newDays]);
 
@@ -209,25 +216,32 @@ export function Dashboard({
 
   const handleDiscardJob = async (id: string) => {
     try {
-      await api.discardJob(id);
-      setRawJobs((prev) => prev.filter((j) => j.id !== id));
+      setOperationError(null);
+      const res = await api.discardJob(id);
+      if (!res.ok) throw new Error('Job could not be discarded.');
+      feed.markClosed(id);
       if (selectedId === id) setSelectedId(null);
+      await loadState();
     } catch (err) {
       console.error('Failed to discard job:', err);
+      setOperationError('Could not discard the job. Please retry.');
     }
   };
 
   const handlePurgeClosed = async () => {
     try {
       const res = await api.discardClosedJobs();
-      if (res.total_closed > 0) {
-        await loadState();
-      }
+      await loadState();
       return res;
     } catch (err) {
       console.error('Failed to purge closed jobs:', err);
+      setOperationError('Could not verify closed jobs. Please retry.');
     }
   };
+  const handleVerifiedClosed = useCallback((id: string) => {
+    feed.markClosed(id);
+    void loadState();
+  }, [feed.markClosed, loadState]);
 
   const compareJobs = compare
     .map((id) => allJobs.find((j) => j.id === id))
@@ -276,7 +290,7 @@ export function Dashboard({
 
   // Quadrant counts
   const sweetCount = useMemo(() => {
-    return allJobs.filter(
+    return visibleJobs.filter(
       (j) =>
         mapQuadrant(
           axisScore(j, ws.xAxis as MapAxis),
@@ -284,10 +298,16 @@ export function Dashboard({
           ws.threshold
         ) === 'sweet'
     ).length;
-  }, [allJobs, ws.xAxis, ws.yAxis, ws.threshold]);
+  }, [visibleJobs, ws.xAxis, ws.yAxis, ws.threshold]);
 
   return (
-    <div className="gmap-root-container">
+    <div className="gmap-root-container has-timeline">
+      {(feed.error || operationError) && (
+        <div className="job-feed-error" role="alert">
+          <span>{operationError || `Live updates paused: ${feed.error} Showing the last received data.`}</span>
+          <button onClick={() => { setOperationError(null); void loadState(); }}>Retry</button>
+        </div>
+      )}
       {/* 1. Full-Screen Interactive Opportunity Map Canvas */}
       <GoogleMapView
         jobs={deferredFilteredJobs}
@@ -344,6 +364,8 @@ export function Dashboard({
           isComparing={compare.includes(placeCard.item.id)}
           onToggleCompare={toggleCompare}
           onDiscard={handleDiscardJob}
+          onVerifiedClosed={handleVerifiedClosed}
+          historical={timelineTime !== null}
         />
       )}
 
@@ -369,7 +391,11 @@ export function Dashboard({
         onOpenCompare={() => setCompareOpen(true)}
         isScanning={scanning}
         scanStatus={scanStatus}
+        historical={timelineTime !== null}
+        stale={Boolean(feed.error)}
       />
+      <JobTimeline now={feed.now} value={timelineTime} onChange={setTimelineTime}
+        count={filteredJobs.length} loading={!feed.data} truncated={feed.data?.timeline?.truncated ?? false} />
 
       {/* 6. Modals (Compare, Profile, Settings) */}
       {compareOpen && compareJobs.length === 2 && (

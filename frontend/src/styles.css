@@ -385,8 +385,17 @@ h5 { font-family: var(--font-display); margin: 0; }
   top: 0;
   cursor: pointer;
   z-index: 10;
-  transition: transform 0.7s var(--ease-apple), z-index 0.1s;
+  transition: transform 0.7s var(--ease-apple), opacity 220ms ease-out, z-index 0.1s;
   contain: layout style;
+}
+
+.gmap-pin[data-state="closed"] {
+  opacity: 0;
+  pointer-events: none;
+}
+
+@starting-style {
+  .gmap-pin[data-state="open"] { opacity: 0; }
 }
 
 /* Counter-scale + centering live here so the outer glide transition never fights zoom updates */

@@ -24,11 +24,12 @@ Copy `config.example.yaml` to `config.yaml` and `.env.example` to `.env` to run 
 
 ```bash
 cd backend && python -m pytest
-cd ../frontend && npx tsc --noEmit && npm run build
+cd ../frontend && npm test && npx tsc --noEmit && npm run build
 ```
 
-All three must pass; CI runs the same checks.
+All checks must pass; CI runs the same checks, including timeline lifecycle tests.
 
+- **Browser regressions:** run `cd frontend`, `npx playwright install chromium`, then `npm run test:e2e`. These tests use synthetic API responses and an isolated preview server, never your backend or personal database. To use installed Microsoft Edge on Windows instead of downloading Chromium, set `$env:PLAYWRIGHT_CHANNEL='msedge'` before running the tests. CI and releases run these checks too.
 - **Tests:** add or update tests for behaviour changes. Tests must never touch your real `config.yaml`, `.env` or database. Use the `workspace` fixture in `backend/tests/conftest.py` for anything that reads or writes project files, and temporary databases for the store.
 - **Backend style:** Python 3.10+, type hints on new public functions, short comments only where the code cannot explain itself.
 - **Frontend style:** TypeScript with no `any` in new code where a real type exists, Tailwind utility classes, and no new dependency without a reason.

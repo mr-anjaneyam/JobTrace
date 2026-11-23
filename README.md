@@ -81,6 +81,7 @@ The dashboard and onboarding are responsive. Below 768 px the place card and exp
 | 💸 | **Token budget controls** | Batched scoring (up to 25 jobs per request), an optional free local triage, and a daily token limit, so a scan never eats your API credits. |
 | 🔁 | **Pluggable scoring** | xkiro, OpenAI, OpenRouter, Ollama, Cursor, JEV, a built-in offline matcher (no key, no cloud), or none at all. |
 | 🗺️ | **A dashboard you will actually open** | Opportunity map, match matrix, compare view, FTS5 full-text search, live scan progress, resume upload and settings. |
+| | **Opening timeline** | Scrub or play the past 30 days, then return to Live. Pins fade out when openings expire or close without resetting your zoom. |
 | 🧭 | **Guided first run** | A step-by-step onboarding, then a progress bar while it does the first scan. It tells you to come back later, and means it. |
 | 🖥️ | **Runs anywhere** | Docker Compose, or from source on Windows, macOS and Linux. |
 
@@ -97,6 +98,15 @@ flowchart LR
 ```
 
 Deeper dive: [OVERVIEW.md](OVERVIEW.md) covers the schema and design notes.
+
+### Live updates and opening history
+
+- The dashboard refreshes every 15 seconds while visible, and on returning to the tab. Known deadlines expire locally within a second even between polls. Failed refreshes show a warning rather than claiming the data is live.
+- The timeline is a slim bar along the bottom edge. Use Play/Pause, drag the slider, or use arrow keys (one hour), Page Up/Down (one day), and Home/End. **Live** returns to current openings. The graph itself looks the same; dots simply fade out as openings expire. Playback respects reduced-motion settings.
+- Expired jobs leave the live map, not the database. History is limited to 30 days and 4,000 jobs, and the bar says "limited" when capped. Retention settings still apply. Existing installs can recover only recorded first-seen/closure times; earlier unrecorded transitions cannot be reconstructed. Match scores and job details are current, not historical snapshots.
+- Deadline closures, aggregator age limits, and confirmed removed listings all update history. HTTP 403/429, network failures, and server errors are unverified, not proof that a job closed. **Clean Stale** forces verification of up to 120 listings instead of waiting for the regular 12-hour cadence.
+- Weekly digests accept database rows and settle jobs only after successful delivery. Failed scheduled passes log a traceback and retry after five minutes. Daily alert logs report pending, unscored, baselined, and below-threshold jobs.
+- Network verification completes before its database writes. Ingest batches roll back on failure; database contention returns HTTP 503 with `Retry-After: 5`. Replayed webhooks do not reopen closed jobs or resend already-alerted openings.
 
 ## 🚀 Quick start
 
@@ -324,8 +334,11 @@ Probably not. Location and seniority gates are strict on purpose: a "US only, on
 pip install -r backend/requirements-dev.txt
 cd backend && python -m pytest          # backend tests (they use a temporary project root)
 cd frontend && npx tsc --noEmit         # type-check
+cd frontend && npm test                 # timeline lifecycle regression tests
 cd frontend && npm run build            # production build
 ```
+
+Browser regressions: from `frontend`, run `npx playwright install chromium` once, then `npm run test:e2e`. Tests use synthetic data and do not connect to your configured backend.
 
 ```
 JobTrace/
