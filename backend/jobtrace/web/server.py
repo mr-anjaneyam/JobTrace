@@ -8,6 +8,7 @@ import logging
 import os
 import queue
 import re
+import sqlite3
 import threading
 import time
 from collections import OrderedDict, deque
@@ -16,8 +17,9 @@ from pathlib import Path
 import yaml
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.concurrency import run_in_threadpool
 
 from .. import __commit__, __version__, applog, geo, limits, presets, sources, telegram
 from ..budget import Budget
@@ -42,6 +44,21 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="JobTrace API", version=__version__, lifespan=lifespan)
+
+
+@app.exception_handler(sqlite3.OperationalError)
+async def database_error(request: Request, exc: sqlite3.OperationalError):
+    # Python 3.10 has no sqlite_errorcode attribute.
+    if (getattr(exc, "sqlite_errorcode", 0) & 0xFF) in (5, 6) or str(exc).lower() in (
+        "database is locked", "database table is locked",
+    ):
+        log.warning("Database busy during %s %s: %s", request.method, request.url.path, exc)
+        return JSONResponse(
+            status_code=503, headers={"Retry-After": "5"},
+            content={"detail": "Database busy. Retry in a few seconds."},
+        )
+    log.error("Database failure during %s %s", request.method, request.url.path, exc_info=exc)
+    return JSONResponse(status_code=500, content={"detail": "Database operation failed."})
 
 app.add_middleware(
     CORSMiddleware,
@@ -94,10 +111,11 @@ def _trigger_background_liveness_check() -> None:
         return
 
     def _worker():
+        thread_store = None
         try:
             _liveness_state["checking"] = True
             _liveness_state["last_check"] = time.time()
-            thread_store = get_store()
+            thread_store = Store(ROOT / "jobtrace.db")
             from ..verifier import verify_and_discard_jobs
             res = verify_and_discard_jobs(thread_store, limit=120)
             if res.get("closed_count", 0) > 0:
@@ -107,6 +125,8 @@ def _trigger_background_liveness_check() -> None:
             log.warning("liveness check failed: %s", e)
             print(f"[Liveness] Error during background check: {e}")
         finally:
+            if thread_store is not None:
+                thread_store.db.close()
             _liveness_state["checking"] = False
             _liveness_lock.release()
 
@@ -722,7 +742,7 @@ async def telegram_detect_chat(request: Request):
 
 
 @app.get("/api/state")
-def state(request: Request):
+def state(request: Request, history: bool = False):
     c, s = get_cfg(), get_store()
 
     # 1. Instantly discard elapsed/stale aggregator postings at UI open time
@@ -739,7 +759,7 @@ def state(request: Request):
     # Best-scored first, capped in SQL so huge databases never load every row
     rows = s.db.execute(
         """SELECT id, company, title, url, location, score, reason, domain, source,
-                  breakdown, first_seen, posted_at, substr(description, 1, 350) as description, closed_at,
+                  breakdown, first_seen, last_seen, posted_at, substr(description, 1, 350) as description, closed_at,
                   salary_min, salary_max, salary_currency, salary_text, deadline_at, deadline_text
            FROM jobs
            WHERE closed_at IS NULL AND matches_filter = 1
@@ -750,6 +770,8 @@ def state(request: Request):
     open_total = s.db.execute("SELECT COUNT(*) FROM jobs WHERE closed_at IS NULL AND matches_filter = 1").fetchone()[0]
 
     jobs_list = [dict(r) for r in rows]
+    for job in jobs_list:
+        job["expires_at"] = _expires_at(job, expire_days)
     mosaic_jobs = _mosaic(jobs_list, limit=STATE_MAX_JOBS)
     scored = [j for j in mosaic_jobs if j.get("score") is not None]
     threshold = int(c.get("llm", {}).get("min_score", 6))
@@ -771,12 +793,58 @@ def state(request: Request):
         "scanning": _scan_state["scanning"],
         "scoring": c.get("llm", {}).get("provider", "none") not in ("none", "off", None, ""),
     }
+    if history:
+        end = time.time()
+        start = end - 30 * 86400
+        history_rows = s.db.execute(
+            """SELECT id, company, title, url, location, score, reason, domain, source,
+                      breakdown, first_seen, last_seen, posted_at, closed_at,
+                      substr(description, 1, 350) AS description,
+                      salary_text, deadline_at, deadline_text
+               FROM jobs WHERE matches_filter = 1 AND EXISTS (
+                   SELECT 1 FROM job_periods p WHERE p.job_id = jobs.id
+                   AND p.opened_at <= ? AND (p.closed_at IS NULL OR p.closed_at > ?)
+                   AND (p.closed_at IS NULL OR p.closed_at > p.opened_at)
+               )
+               ORDER BY closed_at IS NULL DESC, score DESC NULLS LAST, id LIMIT ?""",
+            (end, start, STATE_MAX_JOBS + 1),
+        ).fetchall()
+        history_jobs = [dict(row) for row in history_rows[:STATE_MAX_JOBS]]
+        by_id = {j["id"]: j for j in history_jobs}
+        for job in history_jobs:
+            job["periods"] = []
+            job["expires_at"] = _expires_at(job, expire_days)
+        for offset in range(0, len(history_jobs), 500):
+            ids = [j["id"] for j in history_jobs[offset:offset + 500]]
+            marks = ",".join("?" * len(ids))
+            periods = s.db.execute(
+                f"""SELECT job_id, opened_at, closed_at FROM job_periods
+                    WHERE job_id IN ({marks}) AND opened_at <= ?
+                    AND (closed_at IS NULL OR closed_at > ?)
+                    AND (closed_at IS NULL OR closed_at > opened_at) ORDER BY opened_at""",
+                (*ids, end, start),
+            ).fetchall()
+            for period in periods:
+                by_id[period["job_id"]]["periods"].append({
+                    "opened_at": period["opened_at"], "closed_at": period["closed_at"],
+                })
+        payload["timeline"] = {
+            "start": start, "end": end, "jobs": history_jobs,
+            "truncated": len(history_rows) > STATE_MAX_JOBS,
+        }
     body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
-    headers = {"Vary": "Accept-Encoding"}
+    headers = {"Vary": "Accept-Encoding", "Cache-Control": "no-store"}
     if len(body) > 2048 and "gzip" in request.headers.get("accept-encoding", ""):
         body = gzip.compress(body, compresslevel=5)
         headers["Content-Encoding"] = "gzip"
     return Response(content=body, media_type="application/json", headers=headers)
+
+
+def _expires_at(job: dict, expire_days: int) -> float | None:
+    ends = [job[key] for key in ("deadline_at", "closed_at") if job.get(key) is not None]
+    if job.get("source") in ("remotive", "arbeitnow"):
+        ends.append((job.get("posted_at") or job["last_seen"]) + expire_days * 86400)
+    return min(ends) if ends else None
 
 
 def _mosaic(jobs: list[dict], limit: int) -> list[dict]:
@@ -816,7 +884,8 @@ def get_job_detail(job_id: str):
     s = get_store()
     row = s.db.execute(
         """SELECT id, company, title, url, location, score, reason, domain, source,
-                  breakdown, first_seen, posted_at, description, closed_at
+                  breakdown, first_seen, posted_at, description, closed_at,
+                  salary_text, deadline_at, deadline_text
            FROM jobs WHERE id = ?""",
         (job_id,),
     ).fetchone()
@@ -836,6 +905,7 @@ def get_job_detail(job_id: str):
 def verify_job_endpoint(job_id: str):
     """Verify live HTTP availability and archival status for a specific job."""
     s = get_store()
+    s.close_elapsed_deadlines()
     row = s.db.execute(
         "SELECT id, company, title, url, closed_at, reason FROM jobs WHERE id = ?",
         (job_id,),
@@ -855,7 +925,8 @@ def verify_job_endpoint(job_id: str):
     is_active, reason = check_url_liveness(row["url"] or "")
     if not is_active:
         s.mark_job_closed(job_id, reason=reason)
-    return {"ok": True, "active": is_active, "reason": reason, "url": row["url"]}
+    return {"ok": True, "active": is_active, "verified": reason == "Active",
+            "reason": reason, "url": row["url"]}
 
 
 @app.post("/api/jobs/{job_id}/discard")
@@ -878,7 +949,7 @@ def discard_closed_endpoint():
     elapsed = s.close_stale(["remotive", "arbeitnow"], max_age_days=expire_days)
 
     from ..verifier import verify_and_discard_jobs
-    res = verify_and_discard_jobs(s, limit=120)
+    res = verify_and_discard_jobs(s, limit=120, cadence_hours=0)
     total_closed = len(elapsed) + res.get("closed_count", 0)
     return {
         "ok": True,
@@ -959,9 +1030,12 @@ async def ingest_jobs(request: Request):
     """
     try:
         data = await request.json()
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid JSON body")
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid JSON body") from None
+    return await run_in_threadpool(_ingest_jobs, data)
 
+
+def _ingest_jobs(data: object) -> dict:
     if isinstance(data, list):
         raw_jobs = data
         score_now = True
@@ -1066,6 +1140,13 @@ async def ingest_jobs(request: Request):
 
         norm["matches_filter"] = 1 if matches_filter else 0
 
+        previous = store.db.execute(
+            "SELECT closed_at, reason FROM jobs WHERE id = ?", (norm["id"],),
+        ).fetchone()
+        if previous and previous["closed_at"] is not None:
+            norm["closed_at"] = previous["closed_at"]
+            norm["reason"] = previous["reason"]
+
         # If deadline is already elapsed, mark closed immediately
         if is_deadline_elapsed(d_at):
             norm["closed_at"] = time.time()
@@ -1086,7 +1167,10 @@ async def ingest_jobs(request: Request):
                 norm["breakdown"] = breakdown
 
                 min_score = int(c.get("alerts", {}).get("min_score", c.get("llm", {}).get("min_score", 6)))
-                if notify and score >= min_score:
+                saved = store.db.execute(
+                    "SELECT closed_at, alerted FROM jobs WHERE id = ?", (norm["id"],),
+                ).fetchone()
+                if notify and score >= min_score and saved["closed_at"] is None and not saved["alerted"]:
                     try:
                         label = time.strftime("%d %b %Y, %H:%M")
                         telegram.send_alert(c, [norm], label=label)
@@ -1095,6 +1179,9 @@ async def ingest_jobs(request: Request):
                     except Exception as tg_err:
                         log.warning("Telegram notification failed for %s: %s", norm["id"], tg_err)
             except Exception as score_err:
+                if isinstance(score_err, sqlite3.OperationalError):
+                    store.db.rollback()
+                    raise
                 log.exception("Error scoring ingested job %s: %s", norm["id"], score_err)
                 reason = f"Scoring error: {score_err}"
 

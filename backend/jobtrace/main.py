@@ -117,7 +117,12 @@ def cmd_alert(cfg: dict, store: Store, dry_run: bool = False) -> None:
     narrow["discovery"] = {"enabled": False}
 
     # Ingest and score watched companies
-    cmd_scan(narrow, store, quiet=True)
+    result = cmd_scan(narrow, store, quiet=True)
+    if result.get("errors"):
+        log.warning("Daily alert scan incomplete: %s", "; ".join(result["errors"]))
+    log.info("Daily alert scan: watched=%d fetched=%s new=%s closed=%s errors=%d",
+             len(narrow["companies"]), result.get("total", 0), result.get("new", 0),
+             result.get("closed", 0), len(result.get("errors", [])))
 
     baselined = store.baselined_companies()
     # BUG #1 FIX: Only query unalerted jobs for watched companies!
@@ -148,7 +153,10 @@ def cmd_alert(cfg: dict, store: Store, dry_run: bool = False) -> None:
     ]
 
     if not qualified:
-        print("Nothing new at watched companies.")
+        print(f"No new qualifying watched-company jobs: {len(pending)} pending, "
+              f"{len(fresh_companies)} companies baselined, "
+              f"{sum(r['score'] is None for r in pending)} awaiting scores, "
+              f"{len(below_thresh_ids)} below threshold.")
         if not dry_run and below_thresh_ids:
             store.mark_alerted(below_thresh_ids)
         return
@@ -178,6 +186,7 @@ def cmd_digest(cfg: dict, store: Store, days: int = 7, dry_run: bool = False) ->
     min_score = int(llm_cfg.get("min_score", 0))
     scoring_on = llm_cfg.get("provider", "none") not in ("none", "off", None, "")
 
+    store.close_elapsed_deadlines()
     pending = store.unnotified(min_score=min_score, require_scored=scoring_on)
     closed = store.closed_since(days * 86400)
 

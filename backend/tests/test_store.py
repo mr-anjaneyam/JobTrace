@@ -158,3 +158,76 @@ def test_upsert_commits_in_chunks_and_keeps_existing_descriptions():
     s.upsert([make_job(f"j{i}", desc="replacement text that is also long enough to count " * 3) for i in range(600)])
     assert s.db.execute("SELECT description FROM jobs WHERE id = 'j1'").fetchone()[0] == before
     assert s.stats()["total"] == 600
+
+
+def test_failed_upsert_rolls_back_and_releases_writer(tmp_path):
+    import pytest
+    s = Store(tmp_path / "rollback.db")
+    other = Store(s.path)
+    other.db.execute("PRAGMA busy_timeout = 50")
+    with pytest.raises(KeyError):
+        s.upsert([make_job("first"), {"id": "broken"}])
+    assert not s.db.in_transaction
+    assert s.stats()["total"] == 0
+    other.upsert([make_job("recovered")])
+    assert s.stats()["total"] == 1
+
+
+def test_expired_reingest_stays_closed_and_history_tracks_reopen(tmp_path):
+    s = Store(tmp_path / "history.db")
+    j = {**make_job("deadline"), "deadline_at": 200, "deadline_text": "test deadline"}
+    s.upsert([j], run_ts=100)
+    s.close_elapsed_deadlines(now=200)
+    s.upsert([make_job("deadline")], run_ts=300)
+    assert s.stats()["open"] == 0
+    periods = s.db.execute("SELECT opened_at, closed_at FROM job_periods").fetchall()
+    assert [tuple(p) for p in periods] == [(100, 200)]
+    s.upsert([{**j, "deadline_at": 500}], run_ts=400)
+    s.close_elapsed_deadlines(now=500)
+    assert [tuple(p) for p in s.db.execute(
+        "SELECT opened_at, closed_at FROM job_periods ORDER BY opened_at"
+    )] == [(100, 200), (400, 500)]
+    assert s.prune(1, now=100000) == 1
+    assert s.db.execute("SELECT COUNT(*) FROM job_periods").fetchone()[0] == 0
+
+
+def test_legacy_history_backfill_is_idempotent(tmp_path):
+    import sqlite3
+    from jobtrace.store import SCHEMA
+    path = tmp_path / "legacy.db"
+    with sqlite3.connect(path) as db:
+        db.executescript(SCHEMA)
+        db.execute(
+            "INSERT INTO jobs(id, company, title, first_seen, last_seen, closed_at) VALUES (?,?,?,?,?,?)",
+            ("old", "Acme", "Engineer", 100, 150, 200),
+        )
+    for _ in range(2):
+        s = Store(path)
+        assert [tuple(p) for p in s.db.execute("SELECT opened_at, closed_at FROM job_periods")] == [(100, 200)]
+        s.db.close()
+
+
+def test_score_metadata_closes_deadline_and_persists_salary(tmp_path):
+    from datetime import datetime
+    s = Store(tmp_path / "scored.db")
+    s.upsert([make_job("old")], run_ts=1)
+    s.save_score("old", 8, "Matched", {
+        "salary_min": 50000, "salary_max": 70000, "salary_currency": "USD",
+        "salary_text": "$50k-$70k", "deadline_text": "Nov 1, 2020",
+    })
+    row = s.db.execute("SELECT * FROM jobs").fetchone()
+    assert row["salary_min"] == 50000 and row["salary_max"] == 70000
+    assert row["salary_currency"] == "USD" and row["salary_text"] == "$50k-$70k"
+    assert row["closed_at"] == datetime(2020, 11, 1, 23, 59, 59).timestamp()
+    assert not s.unnotified()
+
+
+def test_upgrade_recovers_deadline_text_from_old_scoring(tmp_path):
+    s = Store(tmp_path / "legacy-deadline.db")
+    s.upsert([make_job("old")], run_ts=1)
+    s.db.execute("UPDATE jobs SET deadline_text = '1 November 2020', deadline_at = NULL")
+    s.db.commit()
+    s.db.close()
+    upgraded = Store(s.path)
+    assert len(upgraded.close_elapsed_deadlines()) == 1
+    assert upgraded.stats()["open"] == 0

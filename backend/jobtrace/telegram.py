@@ -181,8 +181,9 @@ def render_digest(
     notes: list[str] | None = None,
 ) -> str:
     """Render weekly digest message."""
-    tracked = [r for r in new_jobs if r.get("source") not in ("remotive", "arbeitnow")]
-    discovered = [r for r in new_jobs if r.get("source") in ("remotive", "arbeitnow")]
+    jobs = [dict(r) for r in new_jobs]
+    tracked = [r for r in jobs if r.get("source") not in ("remotive", "arbeitnow")]
+    discovered = [r for r in jobs if r.get("source") in ("remotive", "arbeitnow")]
 
     lines = [
         "📡 <b>JOBTRACE: Weekly Digest</b>",

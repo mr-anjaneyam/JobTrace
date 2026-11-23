@@ -77,6 +77,31 @@ def test_cmd_digest_dry_run_sends_nothing(tmp_path, monkeypatch, capsys):
     assert not sent and "DRY RUN" in capsys.readouterr().out
 
 
+def test_digest_renders_database_rows_and_only_settles_after_delivery(tmp_path, monkeypatch):
+    s = Store(tmp_path / "digest.db")
+    s.upsert([
+        {"id": "board", "company": "Acme & Co", "title": "Engineer", "source": "greenhouse"},
+        {"id": "feed", "company": "Remote Co", "title": "Developer", "source": "remotive"},
+    ])
+    cfg = {"llm": {"provider": "none"}, "telegram": {"bot_token": "test", "chat_ids": ["test"]}}
+    messages = []
+    monkeypatch.setattr(main.telegram, "send_chunked", lambda token, chat, text: messages.append(text))
+    main.cmd_digest(cfg, s)
+    assert "Acme &amp; Co" in messages[0] and "Remote Co" in messages[0]
+    assert "Watched Companies" in messages[0] and "Discovered from Remote Feeds" in messages[0]
+    assert not s.unnotified()
+    s.db.execute("UPDATE jobs SET notified = 0")
+    s.db.commit()
+
+    def fail(*args):
+        raise RuntimeError("Telegram unavailable")
+
+    monkeypatch.setattr(main.telegram, "send_chunked", fail)
+    with pytest.raises(RuntimeError, match="Telegram unavailable"):
+        main.cmd_digest(cfg, s)
+    assert len(s.unnotified()) == 2
+
+
 def test_docx_extraction(tmp_path):
     path = tmp_path / "cv.docx"
     xml = (

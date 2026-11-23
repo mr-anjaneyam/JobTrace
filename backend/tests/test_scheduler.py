@@ -60,7 +60,15 @@ def test_failure_does_not_stop_scheduler(monkeypatch):
 
     s = Scheduler(alert_fn=boom, digest_fn=boom)
     s.tick()
-    assert s.last_alert_date == "2026-10-19"
+    assert s.last_alert_date is None
+    calls = []
+    s.alert_fn = lambda: calls.append(1)
+    FakeDT.current = datetime.datetime(2026, 10, 19, 10, 4)
+    s.tick()
+    assert calls == []
+    FakeDT.current = datetime.datetime(2026, 10, 19, 10, 5)
+    s.tick()
+    assert calls == [1] and s.last_alert_date == "2026-10-19"
 
 
 def test_declined_job_is_retried_not_consumed(monkeypatch):

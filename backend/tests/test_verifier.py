@@ -62,7 +62,7 @@ def test_network_errors_never_discard(monkeypatch):
 
 
 def test_forbidden_is_assumed_active(monkeypatch):
-    patch_get(monkeypatch, FakeResponse(status=403))
+    patch_get(monkeypatch, FakeResponse(status=403, body=b"Page not found. Access denied."))
     assert verifier.check_url_liveness("https://boards.example.com/jobs/1")[0] is True
 
 
@@ -89,3 +89,22 @@ def test_verify_and_discard_closes_dead_jobs(tmp_path, monkeypatch):
     assert res["checked"] == 2 and res["closed_count"] == 1
     assert [c["id"] for c in res["closed"]] == ["dead"]
     assert s.stats()["open"] == 1
+
+
+def test_verifier_does_not_lock_database_between_network_results(tmp_path, monkeypatch):
+    s = Store(tmp_path / "concurrent.db")
+    other = Store(s.path)
+    other.db.execute("PRAGMA busy_timeout = 50")
+    s.upsert([job("dead"), job("alive")])
+    monkeypatch.setattr(verifier, "check_url_liveness", lambda url: (url.endswith("alive"), "checked"))
+
+    def completed(futures):
+        ordered = sorted(futures, key=lambda f: f.result()[0])
+        yield ordered[0]
+        other.upsert([job("ingested")])
+        yield ordered[1]
+
+    monkeypatch.setattr(verifier, "as_completed", completed)
+    res = verifier.verify_and_discard_jobs(s)
+    assert res["closed_count"] == 1
+    assert {r["id"] for r in s.unnotified()} == {"alive", "ingested"}

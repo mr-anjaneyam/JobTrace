@@ -27,13 +27,23 @@ def extract_deadline(text: str) -> tuple[float | None, str]:
 
     # 1. Cued regex (Deadline: ..., Last date to apply: ..., Apply before: ..., Walk-in date: ...)
     m = re.search(
-        r"(?:deadline|last\s+date\s+(?:to\s+apply|for\s+application)?|apply\s+before|valid\s+(?:till|until)|closing\s+date|ends\s+on|walk-?in\s+(?:drive\s+)?(?:date|on))\s*:?\s*([^\n\r;,]{3,50})",
+        r"(?:deadline|last\s+date\s+(?:to\s+apply|for\s+application)?|apply\s+(?:before|by)|valid\s+(?:till|until)|closing\s+date|ends\s+on|walk-?in\s+(?:drive\s+)?(?:date|on))\s*:?\s*([^\n\r;]{3,50})",
         clean,
         re.I,
     )
     
-    target_str = m.group(1).strip() if m else clean
+    # Dates elsewhere in a description (posting, graduation, founding) are not deadlines.
+    if not m:
+        return None, ""
+    target_str = m.group(1).strip()
     clean_val = re.sub(r"(\d+)(?:st|nd|rd|th)\b", r"\1", target_str, flags=re.I)
+    iso = re.search(r"\b(\d{4})-(\d{2})-(\d{2})\b", clean_val)
+    if iso:
+        try:
+            dt = datetime(*(int(part) for part in iso.groups()), 23, 59, 59)
+            return dt.timestamp(), dt.strftime("%d %b %Y")
+        except ValueError:
+            return None, target_str[:40]
 
     # Try format: "31 Oct 2026", "31 October 2026", "31 Oct", "Oct 31, 2026"
     m_date1 = re.search(r"\b(\d{1,2})\s+([A-Za-z]{3,9})(?:\s+(\d{4}))?\b", clean_val)
@@ -90,4 +100,4 @@ def is_deadline_elapsed(deadline_at: float | None) -> bool:
     """Returns True if the deadline has passed."""
     if deadline_at is None:
         return False
-    return time.time() > deadline_at
+    return time.time() >= deadline_at

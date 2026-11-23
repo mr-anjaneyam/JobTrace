@@ -16,7 +16,6 @@ from urllib.parse import urlparse
 import requests
 
 from . import applog
-from .deadline import is_deadline_elapsed
 
 if TYPE_CHECKING:
     from .store import Store
@@ -92,6 +91,8 @@ def check_url_liveness(url: str, timeout: float = 5.0) -> tuple[bool, str]:
             # 1. HTTP Status Code Checks
             if resp.status_code in (404, 410):
                 return False, f"Listing removed (HTTP {resp.status_code})"
+            if not 200 <= resp.status_code < 400:
+                return True, f"HTTP {resp.status_code} (unverified; preserved)"
 
             final_url = resp.url.lower()
 
@@ -115,8 +116,9 @@ def check_url_liveness(url: str, timeout: float = 5.0) -> tuple[bool, str]:
             try:
                 chunk = resp.raw.read(65536, decode_content=True)
                 text = chunk.decode("utf-8", errors="ignore")
-            except Exception:
-                text = resp.text[:65536] if hasattr(resp, "text") else ""
+            except (OSError, requests.RequestException) as exc:
+                logger.warning("Could not read listing content: %s", exc)
+                return True, "Content unavailable (unverified; preserved)"
 
             for pattern in ARCHIVED_PATTERNS:
                 m = pattern.search(text)
@@ -124,19 +126,15 @@ def check_url_liveness(url: str, timeout: float = 5.0) -> tuple[bool, str]:
                     snippet = m.group(0).strip()
                     return False, f"Closed notice: '{snippet}'"
 
-            # 4. If status code is valid and no archived patterns found
-            if 200 <= resp.status_code < 400:
-                return True, "Active"
+            return True, "Active"
 
-            # If 403 or other rate limit, don't falsely discard valid listings
-            return True, f"HTTP {resp.status_code} (assumed active)"
-
-    except (requests.Timeout, requests.ConnectionError):
+    except (requests.Timeout, requests.ConnectionError) as exc:
         # On network timeout or connection error, do not discard (prevent false positives if offline)
+        logger.warning("Liveness request failed: %s", exc)
         return True, "Connection timeout (preserved)"
-    except Exception as e:
-        logger.debug(f"Liveness check exception for {url}: {e}")
-        return True, "Unchecked"
+    except requests.RequestException as exc:
+        logger.warning("Liveness request failed: %s", exc)
+        return True, "Unchecked (preserved)"
 
 
 def verify_and_discard_jobs(
@@ -149,7 +147,7 @@ def verify_and_discard_jobs(
     """Check active jobs:
     
     1. Instantly discards jobs whose application deadline has elapsed.
-    2. Pings active jobs without a deadline every `cadence_hours` (default 12 hrs).
+    2. Pings unexpired active jobs every `cadence_hours` (default 12 hrs).
     3. Scans content for closures (e.g. 'position filled', 'currently full', 'page doesn't exist') with 0 AI tokens.
     
     Returns:
@@ -179,7 +177,7 @@ def verify_and_discard_jobs(
         ).fetchall()
         jobs_to_check = [dict(r) for r in rows if r["url"]]
     else:
-        # Check active jobs without deadline that haven't been checked in cadence_hours (12h)
+        # A future deadline does not guarantee that a role is still accepting applications.
         jobs_to_check = store.get_jobs_for_liveness_check(limit=limit, cadence_hours=cadence_hours)
 
     if not jobs_to_check:
@@ -191,6 +189,7 @@ def verify_and_discard_jobs(
 
     # Step 3: Check liveness concurrently
     live_ids: list[str] = []
+    closures: list[tuple[float, str, str]] = []
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_map = {
             executor.submit(check_url_liveness, j["url"]): j
@@ -202,10 +201,7 @@ def verify_and_discard_jobs(
             try:
                 is_active, reason = future.result()
                 if not is_active:
-                    store.db.execute(
-                        "UPDATE jobs SET closed_at = ?, reason = ? WHERE id = ?",
-                        (now, reason, job["id"]),
-                    )
+                    closures.append((time.time(), reason, job["id"]))
                     closed_results.append({
                         "id": job["id"],
                         "company": job["company"],
@@ -217,15 +213,18 @@ def verify_and_discard_jobs(
                 else:
                     live_ids.append(job["id"])
             except Exception as e:
-                logger.debug("Error checking job %s: %s", job["id"], e)
-                live_ids.append(job["id"])
+                logger.exception("Error checking job %s: %s", job["id"], e)
 
-    # Update last_verified_at timestamp on checked live jobs so they won't be pinged again for 12 hours
-    if live_ids:
-        store.touch_liveness_verified(live_ids, timestamp=now)
-
-    if closed_results:
-        store.db.commit()
+    # Never hold a write transaction while waiting for network futures.
+    with store.db:
+        store.db.executemany(
+            "UPDATE jobs SET closed_at = ?, reason = ? WHERE id = ? AND closed_at IS NULL",
+            closures,
+        )
+        store.db.executemany(
+            "UPDATE jobs SET last_verified_at = ? WHERE id = ?",
+            [(now, jid) for jid in live_ids],
+        )
 
     return {
         "checked": len(jobs_to_check) + len(elapsed),

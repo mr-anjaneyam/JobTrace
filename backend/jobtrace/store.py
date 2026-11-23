@@ -6,6 +6,7 @@ import sqlite3
 import time
 from pathlib import Path
 
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS jobs (
     id              TEXT PRIMARY KEY,
@@ -56,22 +57,53 @@ CREATE TABLE IF NOT EXISTS spend (
 );
 """
 
+HISTORY_SCHEMA = """
+BEGIN IMMEDIATE;
+CREATE TABLE IF NOT EXISTS job_periods (
+    id INTEGER PRIMARY KEY,
+    job_id TEXT NOT NULL,
+    opened_at REAL NOT NULL,
+    closed_at REAL
+);
+CREATE INDEX IF NOT EXISTS idx_job_periods_job ON job_periods(job_id);
+INSERT INTO job_periods (job_id, opened_at, closed_at)
+SELECT id, first_seen, closed_at FROM jobs
+WHERE (closed_at IS NULL OR closed_at > first_seen)
+AND NOT EXISTS (SELECT 1 FROM job_periods WHERE job_id = jobs.id);
+CREATE TRIGGER IF NOT EXISTS job_period_insert AFTER INSERT ON jobs
+WHEN NEW.closed_at IS NULL OR NEW.closed_at > NEW.first_seen BEGIN
+    INSERT INTO job_periods (job_id, opened_at, closed_at)
+    VALUES (NEW.id, NEW.first_seen, NEW.closed_at);
+END;
+CREATE TRIGGER IF NOT EXISTS job_period_close AFTER UPDATE OF closed_at ON jobs
+WHEN OLD.closed_at IS NULL AND NEW.closed_at IS NOT NULL BEGIN
+    UPDATE job_periods SET closed_at = NEW.closed_at
+    WHERE job_id = NEW.id AND closed_at IS NULL;
+END;
+CREATE TRIGGER IF NOT EXISTS job_period_reopen AFTER UPDATE OF closed_at ON jobs
+WHEN OLD.closed_at IS NOT NULL AND NEW.closed_at IS NULL BEGIN
+    INSERT INTO job_periods (job_id, opened_at) VALUES (NEW.id, NEW.last_seen);
+END;
+CREATE TRIGGER IF NOT EXISTS job_period_delete AFTER DELETE ON jobs BEGIN
+    DELETE FROM job_periods WHERE job_id = OLD.id;
+END;
+COMMIT;
+"""
+
 
 class Store:
     def __init__(self, path: str | Path = "jobtrace.db"):
         self.path = Path(path)
         self.db = sqlite3.connect(str(self.path), timeout=30.0, check_same_thread=False)
         self.db.row_factory = sqlite3.Row
-        try:
-            self.db.execute("PRAGMA journal_mode = WAL;")
-            self.db.execute("PRAGMA busy_timeout = 30000;")
-            # Keeps the -wal file from staying huge after a big scan
-            self.db.execute("PRAGMA journal_size_limit = 67108864;")
-        except Exception:
-            pass
+        self.db.execute("PRAGMA busy_timeout = 30000;")
+        self.db.execute("PRAGMA journal_mode = WAL;")
+        self.db.execute("PRAGMA journal_size_limit = 67108864;")
         self.db.executescript(SCHEMA)
         self._init_fts()
         self._upgrade_schema()
+        self.db.executescript(HISTORY_SCHEMA)
+        self._backfill_deadlines()
         self.db.commit()
         self.last_upsert_ts = time.time()
 
@@ -102,7 +134,7 @@ class Store:
         rows = self.db.execute(
             """SELECT id, company, title, deadline_text, deadline_at
                FROM jobs
-               WHERE closed_at IS NULL AND deadline_at IS NOT NULL AND deadline_at < ?""",
+               WHERE closed_at IS NULL AND deadline_at IS NOT NULL AND deadline_at <= ?""",
             (curr,),
         ).fetchall()
         if not rows:
@@ -112,25 +144,42 @@ class Store:
             reason = f"Application deadline elapsed ({r['deadline_text'] or 'passed'})"
             self.db.execute(
                 "UPDATE jobs SET closed_at = ?, reason = ? WHERE id = ?",
-                (curr, reason, r["id"]),
+                (r["deadline_at"], reason, r["id"]),
             )
             closed_items.append(dict(r))
         self.db.commit()
         return closed_items
 
+    def _backfill_deadlines(self) -> None:
+        """Recover dates that older scorers persisted only as deadline text."""
+        from .deadline import extract_deadline
+        rows = self.db.execute(
+            "SELECT id, deadline_text FROM jobs WHERE deadline_at IS NULL AND length(deadline_text) > 0",
+        ).fetchall()
+        updates = []
+        for row in rows:
+            timestamp, _ = extract_deadline(f"Deadline: {row['deadline_text']}")
+            if timestamp is not None:
+                updates.append((timestamp, row["id"]))
+        with self.db:
+            self.db.executemany(
+                "UPDATE jobs SET deadline_at = ? WHERE id = ? AND deadline_at IS NULL",
+                updates,
+            )
+
     def get_jobs_for_liveness_check(self, limit: int = 50, cadence_hours: float = 12.0) -> list[dict]:
-        """Fetch active jobs with no deadline that haven't been verified in `cadence_hours`."""
+        """Fetch unexpired jobs not checked within `cadence_hours`."""
         cutoff = time.time() - (cadence_hours * 3600)
         rows = self.db.execute(
             """SELECT id, company, title, url, source, last_verified_at
                FROM jobs
                WHERE closed_at IS NULL
                  AND url IS NOT NULL AND length(url) > 5
-                 AND deadline_at IS NULL
+                 AND (deadline_at IS NULL OR deadline_at > ?)
                  AND (last_verified_at IS NULL OR last_verified_at < ?)
                ORDER BY score DESC NULLS LAST
                LIMIT ?""",
-            (cutoff, limit),
+            (time.time(), cutoff, limit),
         ).fetchall()
         return [dict(r) for r in rows]
 
@@ -180,14 +229,31 @@ class Store:
         now = run_ts if run_ts is not None else time.time()
         self.last_upsert_ts = now
         fresh = []
+        for start in range(0, len(jobs), 250):
+            # Roll back a failed batch so cached connections cannot retain a write lock.
+            with self.db:
+                fresh.extend(self._upsert_batch(jobs[start:start + 250], now))
+        return fresh
 
+    def _upsert_batch(self, jobs: list[dict], now: float) -> list[dict]:
+        fresh = []
         from jobtrace.sanitize import clean_html_text
-        for n, j in enumerate(jobs, 1):
+        for j in jobs:
             jid = j["id"]
             matches_filter = 1 if j.get("matches_filter", True) else 0
             raw_desc = j.get("description") or ""
 
-            row = self.db.execute("SELECT id, closed_at, length(description) FROM jobs WHERE id = ?", (jid,)).fetchone()
+            row = self.db.execute("SELECT id, closed_at, length(description), deadline_at, reason FROM jobs WHERE id = ?", (jid,)).fetchone()
+            deadline = j.get("deadline_at")
+            if deadline is None and row:
+                deadline = row["deadline_at"]
+            closed_at = j.get("closed_at")
+            closure_reason = j.get("reason") if closed_at is not None else None
+            if row and row["closed_at"] is not None and row["reason"] == "Discarded by user":
+                closed_at, closure_reason = row["closed_at"], row["reason"]
+            if deadline is not None and deadline <= now:
+                closed_at = deadline
+                closure_reason = f"Application deadline elapsed ({j.get('deadline_text') or 'passed'})"
             if row:
                 old_desc_len = row[2] or 0
                 # Cleaning is the costly step, so skip it for rows that already have a description
@@ -203,7 +269,8 @@ class Store:
                     self.db.execute(
                         """UPDATE jobs SET
                                last_seen = ?,
-                               closed_at = NULL,
+                               closed_at = ?,
+                               reason = COALESCE(?, reason),
                                matches_filter = ?,
                                url = COALESCE(?, url),
                                location = COALESCE(?, location),
@@ -217,7 +284,7 @@ class Store:
                                deadline_text = CASE WHEN ? != '' THEN ? ELSE deadline_text END
                            WHERE id = ?""",
                         (
-                            now, matches_filter, j.get("url"), j.get("location"), j.get("posted_at"), desc,
+                            now, closed_at, closure_reason, matches_filter, j.get("url"), j.get("location"), j.get("posted_at"), desc,
                             s_min, s_max, s_curr, s_curr, s_txt, s_txt, d_at, d_txt, d_txt, jid
                         ),
                     )
@@ -226,7 +293,8 @@ class Store:
                     self.db.execute(
                         """UPDATE jobs SET
                                last_seen = ?,
-                               closed_at = NULL,
+                               closed_at = ?,
+                               reason = COALESCE(?, reason),
                                matches_filter = ?,
                                url = COALESCE(?, url),
                                location = COALESCE(?, location),
@@ -239,7 +307,7 @@ class Store:
                                deadline_text = CASE WHEN ? != '' THEN ? ELSE deadline_text END
                            WHERE id = ?""",
                         (
-                            now, matches_filter, j.get("url"), j.get("location"), j.get("posted_at"),
+                            now, closed_at, closure_reason, matches_filter, j.get("url"), j.get("location"), j.get("posted_at"),
                             s_min, s_max, s_curr, s_curr, s_txt, s_txt, d_at, d_txt, d_txt, jid
                         ),
                     )
@@ -256,22 +324,20 @@ class Store:
                     """INSERT INTO jobs (
                            id, company, title, url, location, source,
                            posted_at, first_seen, last_seen, domain, description, matches_filter,
-                           salary_min, salary_max, salary_currency, salary_text, deadline_at, deadline_text
-                       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                           salary_min, salary_max, salary_currency, salary_text, deadline_at, deadline_text,
+                           closed_at, reason
+                       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         jid, j["company"], j["title"], j.get("url"), j.get("location", ""),
                         j.get("source", ""), j.get("posted_at"), now, now, j.get("domain", ""),
-                        desc, matches_filter, s_min, s_max, s_curr, s_txt, d_at, d_txt
+                        desc, matches_filter, s_min, s_max, s_curr, s_txt, d_at, d_txt,
+                        closed_at, closure_reason
                     ),
                 )
                 self.sync_fts(jid, j["title"], j["company"], j.get("location", ""), desc)
-                if matches_filter:
+                if matches_filter and closed_at is None:
                     fresh.append(j)
 
-            if n % 250 == 0:
-                self.db.commit()  # short write locks let other processes in between batches
-
-        self.db.commit()
         return fresh
 
     def update_description(self, job_id: str, description: str) -> None:
@@ -349,20 +415,19 @@ class Store:
         cutoff = time.time() - (max_age_days * 86400)
         marks = ",".join("?" * len(sources))
         rows = self.db.execute(
-            f"""SELECT * FROM jobs
+            f"""SELECT *, COALESCE(posted_at, last_seen) + ? AS elapsed_at FROM jobs
                 WHERE source IN ({marks})
                   AND closed_at IS NULL
                   AND (
                       (posted_at IS NOT NULL AND posted_at < ?)
                       OR (posted_at IS NULL AND last_seen < ?)
                   )""",
-            (*sources, cutoff, cutoff),
+            (max_age_days * 86400, *sources, cutoff, cutoff),
         ).fetchall()
-        now = time.time()
         for r in rows:
             self.db.execute(
                 "UPDATE jobs SET closed_at = ?, reason = COALESCE(reason, ?) WHERE id = ?",
-                (now, f"Elapsed posting: older than {max_age_days} days", r["id"]),
+                (r["elapsed_at"], f"Elapsed posting: older than {max_age_days} days", r["id"]),
             )
         self.db.commit()
         return rows
@@ -396,6 +461,10 @@ class Store:
             if not deadline_text:
                 deadline_text = breakdown.get("deadline_text", "")
 
+        if deadline_at is None and deadline_text:
+            from .deadline import extract_deadline
+            deadline_at, _ = extract_deadline(f"Deadline: {deadline_text}")
+
         self.db.execute(
             """UPDATE jobs SET
                    score = ?,
@@ -414,6 +483,11 @@ class Store:
                 salary_text, salary_text, deadline_at, deadline_text, deadline_text, job_id
             ),
         )
+        if deadline_at is not None and deadline_at <= time.time():
+            self.db.execute(
+                "UPDATE jobs SET closed_at = ?, reason = ? WHERE id = ? AND closed_at IS NULL",
+                (deadline_at, f"Application deadline elapsed ({deadline_text or 'passed'})", job_id),
+            )
         self.db.commit()
 
     def unscored(self, limit: int = 5000) -> list[sqlite3.Row]:

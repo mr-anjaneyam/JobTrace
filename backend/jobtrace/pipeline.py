@@ -296,6 +296,7 @@ def _run_pipeline(
     stale_days = int(disc_cfg.get("expire_after_days", 14))
     stale = store.close_stale(["remotive", "arbeitnow"], stale_days)
     closed_count += len(stale)
+    closed_count += len(store.close_elapsed_deadlines())
 
     matching_open = [j for j in all_jobs if j.get("matches_filter")]
     log.info("diff: %d fetched, %d match filters, %d new, %d closed", len(all_jobs), len(matching_open), len(new_jobs), closed_count)
@@ -544,6 +545,7 @@ def _run_pipeline(
 
     return {
         "new": len(new_jobs),
+        "total": len(all_jobs),
         "closed": closed_count,
         "scored": scored_count,
         "errors": errors,
@@ -637,7 +639,7 @@ def score_single_job(job: dict, cfg: dict, store: Store, root_dir: Path) -> tupl
 
     # Enrich with salary & deadline extraction
     from .salary import extract_salary
-    from .deadline import extract_deadline, is_deadline_elapsed
+    from .deadline import extract_deadline
 
     blob = f"{job.get('title', '')} {job.get('description', '')}"
     s_min, s_max, s_curr, s_txt = extract_salary(blob)
@@ -652,12 +654,6 @@ def score_single_job(job: dict, cfg: dict, store: Store, root_dir: Path) -> tupl
     if not breakdown.get("deadline_text") and d_txt:
         breakdown["deadline_text"] = d_txt
         breakdown["deadline_at"] = d_at
-
-    dead_timestamp = breakdown.get("deadline_at") or d_at
-    if is_deadline_elapsed(dead_timestamp):
-        close_reason = f"Application deadline elapsed ({breakdown.get('deadline_text') or d_txt})"
-        store.db.execute("UPDATE jobs SET closed_at = ?, reason = ? WHERE id = ?", (time.time(), close_reason, job["id"]))
-        store.db.commit()
 
     store.save_score(
         job["id"],

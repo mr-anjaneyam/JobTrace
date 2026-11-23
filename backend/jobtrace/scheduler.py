@@ -6,8 +6,11 @@ running daily alert checks and weekly Telegram digests on schedule.
 from __future__ import annotations
 
 import datetime
+import logging
 import time
 from typing import Callable
+
+log = logging.getLogger("jobtrace.scheduler")
 
 
 class Scheduler:
@@ -31,19 +34,24 @@ class Scheduler:
 
         self.last_alert_date: str | None = None
         self.last_digest_date: str | None = None
+        self._retry_after: dict[str, datetime.datetime] = {}
 
     def _attempt(self, key: str, label: str, fn: Callable[[], object], now: datetime.datetime) -> None:
         """Run a job; a job that returns False declined to run and is retried on the next tick."""
         today = now.strftime("%Y-%m-%d")
+        if key in self._retry_after and now < self._retry_after[key]:
+            return
         if getattr(self, f"_announced_{key}", None) != today:
             print(f"[{now.strftime('%H:%M:%S')}] Triggering {label}...", flush=True)
             setattr(self, f"_announced_{key}", today)
         try:
             ran = fn()
-        except Exception as e:
-            print(f"Error during scheduled {label}: {e}", flush=True)
-            ran = True
+        except Exception:
+            log.exception("Scheduled %s failed; retrying in 5 minutes", label)
+            self._retry_after[key] = now + datetime.timedelta(minutes=5)
+            return
         if ran is not False:
+            self._retry_after.pop(key, None)
             setattr(self, f"last_{key}_date", today)
 
     def tick(self) -> None:
